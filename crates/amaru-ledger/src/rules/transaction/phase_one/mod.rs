@@ -157,21 +157,17 @@ where
         },
     )?;
 
-    outputs::execute(
-        context,
-        protocol_parameters,
-        &(*network).into(),
-        mem::take(&mut transaction_body.outputs),
-        |index| {
-            if !is_valid {
-                return None;
-            }
+    let network = (*network).into();
 
-            Some(TransactionInput { transaction_id, index })
-        },
-    )?;
+    outputs::execute(context, protocol_parameters, &network, mem::take(&mut transaction_body.outputs), |index| {
+        if !is_valid {
+            return None;
+        }
 
-    withdrawals::execute(context, mem::take(&mut transaction_body.withdrawals).map(|xs| xs.to_vec()))?;
+        Some(TransactionInput { transaction_id, index })
+    })?;
+
+    withdrawals::execute(context, mem::take(&mut transaction_body.withdrawals).map(|xs| xs.to_vec()), &network)?;
 
     proposals::execute(
         context,

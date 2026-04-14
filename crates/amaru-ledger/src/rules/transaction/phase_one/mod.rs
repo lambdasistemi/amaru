@@ -15,8 +15,8 @@
 use std::{fmt, mem, ops::Deref};
 
 use amaru_kernel::{
-    AuxiliaryData, EraHistory, NetworkName, ProtocolParameters, TransactionBody, TransactionInput, TransactionPointer,
-    WitnessSet,
+    AuxiliaryData, EraHistory, Network, NetworkName, ProtocolParameters, TransactionBody, TransactionInput,
+    TransactionPointer, WitnessSet,
 };
 use thiserror::Error;
 
@@ -83,6 +83,9 @@ pub enum PhaseOneError {
 
     #[error("invalid transaction metadata: {0}")]
     Metadata(#[from] InvalidTransactionMetadata),
+
+    #[error("invalid network ID in transaction body: expected {expected:?} recevied {received:?}")]
+    InvalidNetworkID { expected: Network, received: Network },
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -101,7 +104,16 @@ pub fn execute<C>(
 where
     C: ValidationContext + fmt::Debug,
 {
+    let network: Network = (*network).into();
+
     let transaction_id = transaction_body.id();
+
+    if let Some(network_id) = transaction_body.network_id {
+        let received: Network = u8::from(network_id).into();
+        if network != received {
+            return Err(PhaseOneError::InvalidNetworkID { expected: network, received });
+        }
+    }
 
     metadata::execute(&transaction_body, transaction_auxiliary_data)?;
 
@@ -140,7 +152,7 @@ where
     outputs::execute(
         context,
         protocol_parameters,
-        &(*network).into(),
+        &network,
         mem::take(&mut transaction_body.collateral_return).map(|x| vec![x]).unwrap_or_default(),
         |_index| {
             if is_valid {
@@ -156,8 +168,6 @@ where
             Some(TransactionInput { transaction_id, index: offset })
         },
     )?;
-
-    let network = (*network).into();
 
     outputs::execute(context, protocol_parameters, &network, mem::take(&mut transaction_body.outputs), |index| {
         if !is_valid {

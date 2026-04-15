@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use amaru_kernel::{
-    Certificate, CertificatePointer, DRep, DRepRegistration, Epoch, EraHistory, EraHistoryError, Hash, MemoizedDatum,
-    NonEmptySet, PROTOCOL_VERSION_9, PoolId, PoolParams, ProtocolParameters, RequiredScript, ScriptPurpose,
-    StakeCredential, TransactionPointer, size::SCRIPT,
+    Address, Certificate, CertificatePointer, DRep, DRepRegistration, Epoch, EraHistory, EraHistoryError, HasNetwork,
+    Hash, Lovelace, MemoizedDatum, Network, NonEmptySet, PROTOCOL_VERSION_9, PoolId, PoolParams, ProtocolParameters,
+    RequiredScript, ScriptPurpose, StakeCredential, TransactionPointer, size::SCRIPT,
 };
 use thiserror::Error;
 
@@ -52,10 +52,20 @@ pub enum InvalidCertificates {
 
     #[error("impossible slot arithmetic: {0}")]
     ImpossibleSlotArithmetic(#[from] EraHistoryError),
+
+    #[error("pool reward account has wrong network: expected {expected:?}, actual {actual:?}")]
+    PoolWrongNetwork { expected: Network, actual: Network },
+
+    #[error("pool reward account is malformed")]
+    PoolMalformedRewardAccount,
+
+    #[error("pool cost too low: provided {provided}, minimum {minimum}")]
+    PoolCostTooLow { provided: Lovelace, minimum: Lovelace },
 }
 
 pub(crate) fn execute<C>(
     context: &mut C,
+    network: Network,
     protocol_parameters: &ProtocolParameters,
     era_history: &EraHistory,
     governance_activity: &GovernanceActivity,
@@ -69,6 +79,7 @@ where
         |(certificate_index, certificate)| {
             execute_one(
                 context,
+                network,
                 protocol_parameters,
                 era_history,
                 governance_activity,
@@ -82,6 +93,7 @@ where
 // FIXME: Perform all necessary rules validations down here.
 fn execute_one<C>(
     context: &mut C,
+    network: Network,
     protocol_parameters: &ProtocolParameters,
     era_history: &EraHistory,
     governance_activity: &GovernanceActivity,
@@ -121,6 +133,21 @@ where
             for owner in owners.iter() {
                 context.require_vkey_witness(*owner);
             }
+
+            let reward_address = Address::from_bytes(&reward_account[..])
+                .map_err(|_| InvalidCertificates::PoolMalformedRewardAccount)?;
+            let actual_network = reward_address.has_network();
+            if actual_network != network {
+                return Err(InvalidCertificates::PoolWrongNetwork { expected: network, actual: actual_network });
+            }
+
+            if cost < protocol_parameters.min_pool_cost {
+                return Err(InvalidCertificates::PoolCostTooLow {
+                    provided: cost,
+                    minimum: protocol_parameters.min_pool_cost,
+                });
+            }
+
             let params = PoolParams { id, vrf, pledge, cost, margin, reward_account, owners, relays, metadata };
             PoolsSlice::register(context, params, pointer);
             Ok(())
@@ -245,32 +272,32 @@ where
 
         Certificate::StakeVoteDeleg(credential, pool, drep) => {
             let drep_deleg = Certificate::VoteDeleg(credential.clone(), drep);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, drep_deleg)?;
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, drep_deleg)?;
             let pool_deleg = Certificate::StakeDelegation(credential, pool);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, pool_deleg)
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, pool_deleg)
         }
 
         Certificate::StakeRegDeleg(credential, pool, coin) => {
             let reg = Certificate::Reg(credential.clone(), coin);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, reg)?;
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, reg)?;
             let pool_deleg = Certificate::StakeDelegation(credential, pool);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, pool_deleg)
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, pool_deleg)
         }
 
         Certificate::StakeVoteRegDeleg(credential, pool, drep, coin) => {
             let reg = Certificate::Reg(credential.clone(), coin);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, reg)?;
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, reg)?;
             let pool_deleg = Certificate::StakeDelegation(credential.clone(), pool);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, pool_deleg)?;
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, pool_deleg)?;
             let drep_deleg = Certificate::VoteDeleg(credential, drep);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, drep_deleg)
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, drep_deleg)
         }
 
         Certificate::VoteRegDeleg(credential, drep, coin) => {
             let reg = Certificate::Reg(credential.clone(), coin);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, reg)?;
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, reg)?;
             let drep_deleg = Certificate::VoteDeleg(credential, drep);
-            execute_one(context, protocol_parameters, era_history, governance_activity, pointer, drep_deleg)
+            execute_one(context, network, protocol_parameters, era_history, governance_activity, pointer, drep_deleg)
         }
     }
 }

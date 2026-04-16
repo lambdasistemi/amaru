@@ -61,6 +61,15 @@ pub enum InvalidCertificates {
 
     #[error("pool cost too low: provided {provided}, minimum {minimum}")]
     PoolCostTooLow { provided: Lovelace, minimum: Lovelace },
+
+    #[error("pool retirement epoch out of range: epoch {epoch}, must satisfy {current_epoch} < epoch <= {max_epoch}")]
+    PoolRetirementWrongEpoch { epoch: Epoch, current_epoch: Epoch, max_epoch: Epoch },
+
+    #[error("incorrect stake registration deposit: provided {provided}, expected {expected}")]
+    IncorrectStakeDeposit { provided: Lovelace, expected: Lovelace },
+
+    #[error("incorrect drep registration deposit: provided {provided}, expected {expected}")]
+    IncorrectDRepDeposit { provided: Lovelace, expected: Lovelace },
 }
 
 pub(crate) fn execute<C>(
@@ -155,6 +164,22 @@ where
 
         Certificate::PoolRetirement(id, epoch) => {
             context.require_vkey_witness(id);
+
+            // NOTE: Some conformance tests fail this check because the Haskell imp tests run on
+            // a synthetic test chain whose epoch/slot mapping differs from our era_history. Our
+            // slot_to_epoch computes a different current epoch, making the range check reject
+            // transactions that the Haskell node accepts.
+            let current_epoch = era_history.slot_to_epoch(pointer.slot(), pointer.slot())?;
+            let retirement_epoch = Epoch::from(epoch);
+            let max_epoch = current_epoch + protocol_parameters.stake_pool_max_retirement_epoch;
+            if retirement_epoch <= current_epoch || retirement_epoch > max_epoch {
+                return Err(InvalidCertificates::PoolRetirementWrongEpoch {
+                    epoch: retirement_epoch,
+                    current_epoch,
+                    max_epoch,
+                });
+            }
+
             PoolsSlice::retire(context, id, Epoch::from(epoch));
             Ok(())
         }
@@ -179,6 +204,11 @@ where
                     StakeCredential::ScriptHash(hash) => context.require_script_witness(into_required_script(hash)),
                     StakeCredential::AddrKeyhash(hash) => context.require_vkey_witness(hash),
                 };
+            }
+
+            let expected = protocol_parameters.stake_credential_deposit;
+            if deposit != expected {
+                return Err(InvalidCertificates::IncorrectStakeDeposit { provided: deposit, expected });
             }
 
             AccountsSlice::register(context, credential, AccountState { deposit, pool: None, drep: None })?;
@@ -208,6 +238,11 @@ where
                 StakeCredential::ScriptHash(hash) => context.require_script_witness(into_required_script(hash)),
                 StakeCredential::AddrKeyhash(hash) => context.require_vkey_witness(hash),
             };
+
+            let expected = protocol_parameters.drep_deposit;
+            if deposit != expected {
+                return Err(InvalidCertificates::IncorrectDRepDeposit { provided: deposit, expected });
+            }
 
             let valid_until = if protocol_parameters.protocol_version <= PROTOCOL_VERSION_9 {
                 era_history.slot_to_epoch(pointer.slot(), pointer.slot())? + protocol_parameters.drep_expiry

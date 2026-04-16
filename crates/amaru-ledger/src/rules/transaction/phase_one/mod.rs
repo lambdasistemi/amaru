@@ -81,6 +81,9 @@ pub enum PhaseOneError {
     #[error("invalid collateral: {0}")]
     Collateral(#[from] InvalidCollateral),
 
+    #[error("invalid proposals: {0}")]
+    Proposals(#[from] proposals::InvalidProposals),
+
     #[error("invalid transaction metadata: {0}")]
     Metadata(#[from] InvalidTransactionMetadata),
 
@@ -182,9 +185,11 @@ where
 
     proposals::execute(
         context,
+        network,
+        protocol_parameters,
         (transaction_id, pointer),
         mem::take(&mut transaction_body.proposals).map(|xs| xs.to_vec()),
-    );
+    )?;
 
     voting_procedures::execute(context, mem::take(&mut transaction_body.votes));
 

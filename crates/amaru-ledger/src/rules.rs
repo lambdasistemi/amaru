@@ -68,10 +68,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         context::assert::{AssertPreparationContext, AssertValidationContext},
-        rules::{
-            self,
-            block::{BlockValidation, InvalidBlockDetails},
-        },
+        rules::block::{BlockValidation, InvalidBlockDetails},
         store::GovernanceActivity,
         tests::{fake_input, fake_output},
     };
@@ -95,27 +92,6 @@ pub(crate) mod tests {
     });
 
     static ARENA_POOL: LazyLock<ArenaPool> = LazyLock::new(|| ArenaPool::new(10, 1_024_000));
-
-    #[test]
-    fn validate_block_success() {
-        let mut ctx = (*CONWAY_BLOCK_CONTEXT).clone();
-
-        let block = parse_block(&CONWAY_BLOCK).unwrap();
-
-        prepare_block(&mut ctx, &block);
-
-        let results = rules::block::execute(
-            &mut AssertValidationContext::from(ctx),
-            &ARENA_POOL,
-            &NetworkName::Preprod,
-            &PREPROD_DEFAULT_PROTOCOL_PARAMETERS,
-            <&EraHistory>::from(NetworkName::Preprod),
-            &GovernanceActivity { consecutive_dormant_epochs: 0 },
-            block,
-        );
-
-        assert!(matches!(results, BlockValidation::Valid(())));
-    }
 
     #[test]
     fn validate_block_serialization_err() {

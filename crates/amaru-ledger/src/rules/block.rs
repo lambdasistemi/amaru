@@ -20,8 +20,7 @@ use std::{
 
 use amaru_kernel::{
     Block, EraHistory, ExUnits, HasExUnits, Hash, HeaderHash, NetworkName, ProtocolParameters, Slot, TransactionId,
-    TransactionPointer,
-    size::BLOCK_BODY,
+    TransactionPointer, size::BLOCK_BODY,
 };
 use amaru_observability::trace_span;
 use amaru_plutus::arena_pool::ArenaPool;

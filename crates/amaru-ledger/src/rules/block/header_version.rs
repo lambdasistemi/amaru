@@ -16,7 +16,10 @@ use amaru_kernel::{Block, ProtocolParameters};
 
 use super::InvalidBlockDetails;
 
-pub fn block_header_version_valid(block: &Block, protocol_params: &ProtocolParameters) -> Result<(), InvalidBlockDetails> {
+pub fn block_header_version_valid(
+    block: &Block,
+    protocol_params: &ProtocolParameters,
+) -> Result<(), InvalidBlockDetails> {
     let header_major = block.header.header_body.protocol_version.0;
     let max_major = protocol_params.protocol_version.0 + 1;
     if header_major > max_major {
@@ -40,10 +43,7 @@ mod tests {
             )
         };
         ($number:literal, $pp:expr) => {
-            (
-                include_cbor!(concat!("blocks/preprod/", $number, "/valid.cbor")),
-                $pp,
-            )
+            (include_cbor!(concat!("blocks/preprod/", $number, "/valid.cbor")), $pp)
         };
     }
 

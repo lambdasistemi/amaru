@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use amaru_kernel::{
-    Address, Certificate, CertificatePointer, DRep, DRepRegistration, Epoch, EraHistory, EraHistoryError, HasNetwork,
-    Hash, Lovelace, MemoizedDatum, Network, NonEmptySet, PROTOCOL_VERSION_9, PoolId, PoolParams, ProtocolParameters,
-    RequiredScript, ScriptPurpose, StakeCredential, TransactionPointer, size::SCRIPT,
+    Certificate, CertificatePointer, DRep, DRepRegistration, Epoch, EraHistory, EraHistoryError, Hash, Lovelace,
+    MemoizedDatum, Network, NonEmptySet, PROTOCOL_VERSION_9, PoolId, PoolParams, ProtocolParameters, RequiredScript,
+    ScriptPurpose, StakeCredential, TransactionPointer, parse_reward_account, size::SCRIPT,
 };
 use thiserror::Error;
 
@@ -143,11 +143,13 @@ where
                 context.require_vkey_witness(*owner);
             }
 
-            let reward_address = Address::from_bytes(&reward_account[..])
-                .map_err(|_| InvalidCertificates::PoolMalformedRewardAccount)?;
-            let actual_network = reward_address.has_network();
-            if actual_network != network {
-                return Err(InvalidCertificates::PoolWrongNetwork { expected: network, actual: actual_network });
+            let reward_account_netwrok =
+                parse_reward_account(&reward_account).ok_or(InvalidCertificates::PoolMalformedRewardAccount)?.1;
+            if reward_account_netwrok != network {
+                return Err(InvalidCertificates::PoolWrongNetwork {
+                    expected: network,
+                    actual: reward_account_netwrok,
+                });
             }
 
             if cost < protocol_parameters.min_pool_cost {
@@ -169,7 +171,7 @@ where
             // a synthetic test chain whose epoch/slot mapping differs from our era_history. Our
             // slot_to_epoch computes a different current epoch, making the range check reject
             // transactions that the Haskell node accepts.
-            let current_epoch = era_history.slot_to_epoch(pointer.slot(), pointer.slot())?;
+            let current_epoch = era_history.slot_to_epoch_unchecked_horizon(pointer.slot())?;
             let retirement_epoch = Epoch::from(epoch);
             let max_epoch = current_epoch + protocol_parameters.stake_pool_max_retirement_epoch;
             if retirement_epoch <= current_epoch || retirement_epoch > max_epoch {
@@ -245,9 +247,9 @@ where
             }
 
             let valid_until = if protocol_parameters.protocol_version <= PROTOCOL_VERSION_9 {
-                era_history.slot_to_epoch(pointer.slot(), pointer.slot())? + protocol_parameters.drep_expiry
+                era_history.slot_to_epoch_unchecked_horizon(pointer.slot())? + protocol_parameters.drep_expiry
             } else {
-                era_history.slot_to_epoch(pointer.slot(), pointer.slot())? + protocol_parameters.drep_expiry
+                era_history.slot_to_epoch_unchecked_horizon(pointer.slot())? + protocol_parameters.drep_expiry
                     - governance_activity.consecutive_dormant_epochs as u64
             };
 

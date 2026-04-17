@@ -147,7 +147,7 @@ fn validate_proposal(
 
             // NOTE: conformance tests are brittle on this check due to era_history mismatch.
             // (see certificates.rs PoolRetirement comment for details)
-            let current = era_history.slot_to_epoch(pointer.slot, pointer.slot)?;
+            let current = era_history.slot_to_epoch_unchecked_horizon(pointer.slot)?;
             for (_, expiry) in added.iter() {
                 if Epoch::from(*expiry) <= current {
                     return Err(InvalidProposals::ExpirationEpochTooSmall { expiry: Epoch::from(*expiry), current });
@@ -187,26 +187,26 @@ fn pv_can_follow(current: ProtocolVersion, new: ProtocolVersion) -> bool {
 }
 
 fn ppu_well_formed(pv: ProtocolVersion, ppu: &ProtocolParamUpdate) -> Result<(), InvalidProposals> {
-    fn reject_zero(field: Option<u64>, field_name: String) -> Result<(), InvalidProposals> {
+    fn reject_zero(field: Option<u64>, field_name: &str) -> Result<(), InvalidProposals> {
         if field == Some(0) {
-            return Err(InvalidProposals::MalformedProposal { reason: field_name + " cannot be 0" });
+            return Err(InvalidProposals::MalformedProposal { reason: format!("{field_name} cannot be 0") });
         }
         Ok(())
     }
 
-    reject_zero(ppu.max_block_body_size, "max_block_body_size".into())?;
-    reject_zero(ppu.max_transaction_size, "max_transaction_size".into())?;
-    reject_zero(ppu.max_block_header_size, "max_block_header_size".into())?;
-    reject_zero(ppu.max_value_size, "max_value_size".into())?;
-    reject_zero(ppu.collateral_percentage, "collateral_percentage".into())?;
-    reject_zero(ppu.committee_term_limit, "committee_term_limit".into())?;
-    reject_zero(ppu.governance_action_validity_period, "governance_action_validity_period".into())?;
-    reject_zero(ppu.pool_deposit, "pool_deposit".into())?;
-    reject_zero(ppu.governance_action_deposit, "governance_action_deposit".into())?;
-    reject_zero(ppu.drep_deposit, "drep_deposit".into())?;
+    reject_zero(ppu.max_block_body_size, "max_block_body_size")?;
+    reject_zero(ppu.max_transaction_size, "max_transaction_size")?;
+    reject_zero(ppu.max_block_header_size, "max_block_header_size")?;
+    reject_zero(ppu.max_value_size, "max_value_size")?;
+    reject_zero(ppu.collateral_percentage, "collateral_percentage")?;
+    reject_zero(ppu.committee_term_limit, "committee_term_limit")?;
+    reject_zero(ppu.governance_action_validity_period, "governance_action_validity_period")?;
+    reject_zero(ppu.pool_deposit, "pool_deposit")?;
+    reject_zero(ppu.governance_action_deposit, "governance_action_deposit")?;
+    reject_zero(ppu.drep_deposit, "drep_deposit")?;
 
     if pv.0 != 9 {
-        reject_zero(ppu.ada_per_utxo_byte, "ada_per_utxo_byte".into())?;
+        reject_zero(ppu.ada_per_utxo_byte, "ada_per_utxo_byte")?;
     }
 
     let is_empty = ppu.minfee_a.is_none()

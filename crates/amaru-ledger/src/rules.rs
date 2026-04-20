@@ -95,10 +95,8 @@ pub(crate) mod tests {
 
     #[test]
     fn validate_block_success() {
-        let pp = ProtocolParameters {
-            gov_action_deposit: 50_000_000_000,
-            ..PREPROD_INITIAL_PROTOCOL_PARAMETERS.clone()
-        };
+        let pp =
+            ProtocolParameters { gov_action_deposit: 50_000_000_000, ..PREPROD_INITIAL_PROTOCOL_PARAMETERS.clone() };
 
         let mut ctx = (*CONWAY_BLOCK_CONTEXT).clone();
 

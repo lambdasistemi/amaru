@@ -94,6 +94,32 @@ pub(crate) mod tests {
     static ARENA_POOL: LazyLock<ArenaPool> = LazyLock::new(|| ArenaPool::new(10, 1_024_000));
 
     #[test]
+    fn validate_block_success() {
+        let pp = ProtocolParameters {
+            gov_action_deposit: 50_000_000_000,
+            ..PREPROD_INITIAL_PROTOCOL_PARAMETERS.clone()
+        };
+
+        let mut ctx = (*CONWAY_BLOCK_CONTEXT).clone();
+
+        let block = parse_block(&CONWAY_BLOCK).unwrap();
+
+        prepare_block(&mut ctx, &block);
+
+        let results = block::execute(
+            &mut AssertValidationContext::from(ctx),
+            &ARENA_POOL,
+            &NetworkName::Preprod,
+            &pp,
+            <&EraHistory>::from(NetworkName::Preprod),
+            &GovernanceActivity { consecutive_dormant_epochs: 0 },
+            block,
+        );
+
+        assert!(matches!(results, BlockValidation::Valid(())));
+    }
+
+    #[test]
     fn validate_block_serialization_err() {
         assert!(parse_block(&MODIFIED_CONWAY_BLOCK).is_err())
     }

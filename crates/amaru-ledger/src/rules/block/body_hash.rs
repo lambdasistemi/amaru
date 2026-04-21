@@ -36,9 +36,17 @@ mod tests {
         ($number:literal) => {
             include_cbor!(concat!("blocks/preprod/", $number, "/valid.cbor"))
         };
+        ($number:literal, $variant:literal) => {
+            include_cbor!(concat!("blocks/preprod/", $number, "/", $variant, ".cbor"))
+        };
     }
 
     #[test_case(fixture!("2667657"); "valid")]
+    #[test_case(
+        fixture!("2667657", "invalid_block_body_hash")
+        => matches Err(InvalidBlockDetails::InvalidBodyHash { .. });
+        "body hash mismatch"
+    )]
     fn test_body_hash(block: Block) -> Result<(), InvalidBlockDetails> {
         super::block_body_hash_valid(&block)
     }

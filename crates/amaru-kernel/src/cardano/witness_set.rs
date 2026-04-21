@@ -34,9 +34,12 @@ use crate::{
 ///   <https://github.com/IntersectMBO/cardano-ledger/blob/fe0af09c8667bf8ffdd17dd1a387515b9b0533bf/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/TxWits.hs#L610-L624>
 ///
 ///   Importantly, this behaviour is changing again in v12, back to being a non-empty set / maps.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, cbor::Encode, cbor::Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, cbor::Encode)]
 #[cbor(map)]
 pub struct WitnessSet {
+    #[cbor(skip)]
+    original_size: u64,
+
     #[n(0)]
     pub vkeywitness: Option<NonEmptyVec<VKeyWitness>>,
 
@@ -65,7 +68,46 @@ pub struct WitnessSet {
     pub plutus_v3_script: Option<NonEmptyVec<PlutusScript<3>>>,
 }
 
+impl<'b, C> cbor::Decode<'b, C> for WitnessSet {
+    fn decode(d: &mut cbor::Decoder<'b>, ctx: &mut C) -> Result<Self, cbor::decode::Error> {
+        let start = d.position();
+
+        let mut ws = WitnessSet::default();
+
+        cbor::heterogeneous_map(
+            d,
+            &mut ws,
+            |d| d.u64(),
+            |d, ws, k| {
+                match k {
+                    0 => ws.vkeywitness = d.decode_with(ctx)?,
+                    1 => ws.native_script = d.decode_with(ctx)?,
+                    2 => ws.bootstrap_witness = d.decode_with(ctx)?,
+                    3 => ws.plutus_v1_script = d.decode_with(ctx)?,
+                    4 => ws.plutus_data = d.decode_with(ctx)?,
+                    5 => ws.redeemer = d.decode_with(ctx)?,
+                    6 => ws.plutus_v2_script = d.decode_with(ctx)?,
+                    7 => ws.plutus_v3_script = d.decode_with(ctx)?,
+                    _ => {
+                        d.skip()?;
+                    }
+                };
+                Ok(())
+            },
+        )?;
+
+        ws.original_size = (d.position() - start) as u64;
+
+        Ok(ws)
+    }
+}
+
 impl WitnessSet {
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> u64 {
+        self.original_size
+    }
+
     /// Collect provided scripts and compute each ScriptHash in a witness set
     pub fn get_provided_scripts(&self) -> BTreeMap<Hash<SCRIPT>, ScriptKind> {
         let mut provided_scripts = BTreeMap::new();

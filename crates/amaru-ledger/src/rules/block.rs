@@ -196,7 +196,8 @@ where
 
     // using `zip` here instead of enumerate as it is safer to cast from u32 to usize than usize to u32
     // Realistically, we're never gonna hit the u32 limit with the number of transactions in a block (a boy can dream)
-    for (i, transaction, tx_size) in block {
+    for sized_tx in block {
+        let transaction = &sized_tx.transaction;
         let transaction_hash = transaction.body.id();
 
         transaction.body.required_signers.as_deref().unwrap_or(&[]).iter().for_each(|vk_hash| {
@@ -205,7 +206,7 @@ where
 
         let pointer = TransactionPointer {
             slot,
-            transaction_index: i as usize, // From u32
+            transaction_index: sized_tx.index as usize, // From u32
         };
 
         let consumed_inputs = match transaction::phase_one::execute(
@@ -219,13 +220,13 @@ where
             transaction.body.clone(),
             &transaction.witnesses,
             transaction.auxiliary_data.as_ref(),
-            tx_size,
+            sized_tx.size,
         ) {
             Ok(inputs) => inputs,
             Err(err) => {
                 return with_block_context(Err(InvalidBlockDetails::Transaction {
                     transaction_hash,
-                    transaction_index: i,
+                    transaction_index: sized_tx.index,
                     violation: err.into(),
                 }));
             }
@@ -244,7 +245,7 @@ where
         ) {
             return with_block_context(Err(InvalidBlockDetails::Transaction {
                 transaction_hash,
-                transaction_index: i,
+                transaction_index: sized_tx.index,
                 violation: e.into(),
             }));
         }

@@ -15,7 +15,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AuxiliaryData, Hash, Hasher, Header, HeaderHash, Point, Tip, Transaction, TransactionBody, WitnessSet, cbor,
+    AuxiliaryData, Hash, Hasher, Header, HeaderHash, Point, SizedTransaction, Tip, Transaction, TransactionBody,
+    WitnessSet, cbor,
     size::{BLOCK_BODY, HEADER},
 };
 
@@ -32,9 +33,6 @@ pub struct Block {
 
     #[cbor(skip)]
     header_hash: HeaderHash,
-
-    #[cbor(skip)]
-    transaction_sizes: Vec<u64>,
 
     #[n(0)]
     pub header: Header,
@@ -84,25 +82,32 @@ impl Block {
 }
 
 impl IntoIterator for Block {
-    type Item = (u32, Transaction, u64);
+    type Item = SizedTransaction;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(mut self) -> Self::IntoIter {
-        let transaction_sizes = self.transaction_sizes;
+        // Conway tx size for fee calculation: array(3) + body + witnesses + aux (or null).
+        // isValid is intentionally excluded for backward compatibility with pre-Alonzo eras.
+        // See: https://github.com/IntersectMBO/cardano-ledger/blob/0cfbf861cfb456660a7b73281c6fb714a53d40f9/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/Tx.hs#L351-L362
+        const TX_FRAMING_BYTES: u64 = 1; // array(3) header = 0x83
+        const NULL_AUX_DATA_BYTES: u64 = 1; // CBOR null = 0xf6
 
         (0u32..)
             .zip(self.transaction_bodies)
             .zip(self.transaction_witnesses)
-            .map(|((i, body), witnesses)| {
+            .map(|((index, body), witnesses)| {
                 let is_expected_valid =
-                    !self.invalid_transactions.as_ref().map(|set| set.contains(&i)).unwrap_or(false);
+                    !self.invalid_transactions.as_ref().map(|set| set.contains(&index)).unwrap_or(false);
 
                 // TODO: Do not re-hash here, but get the hash while parsing.
-                let auxiliary_data: Option<AuxiliaryData> = self.auxiliary_data.remove(&i);
+                let auxiliary_data: Option<AuxiliaryData> = self.auxiliary_data.remove(&index);
 
-                let tx_size = transaction_sizes.get(i as usize).copied().unwrap_or(0);
+                let size = TX_FRAMING_BYTES
+                    + body.len()
+                    + witnesses.len()
+                    + auxiliary_data.as_ref().map(|a| a.len()).unwrap_or(NULL_AUX_DATA_BYTES);
 
-                (i, Transaction { body, witnesses, is_expected_valid, auxiliary_data }, tx_size)
+                SizedTransaction { index, transaction: Transaction { body, witnesses, is_expected_valid, auxiliary_data }, size }
             })
             .collect::<Vec<_>>()
             .into_iter()
@@ -129,40 +134,13 @@ impl<'b, C> cbor::Decode<'b, C> for Block {
 
             let (header, header_bytes) = cbor::tee(d, |d| d.decode_with(ctx))?;
 
-            let ((transaction_bodies, transaction_body_sizes), transaction_bodies_bytes) =
-                cbor::tee(d, |d| cbor::decode_array_with_item_sizes::<TransactionBody, _>(d, ctx))?;
+            let (transaction_bodies, transaction_bodies_bytes) = cbor::tee(d, |d| d.decode_with(ctx))?;
 
-            let ((transaction_witnesses, transaction_witness_sizes), transaction_witnesses_bytes) =
-                cbor::tee(d, |d| cbor::decode_array_with_item_sizes::<WitnessSet, _>(d, ctx))?;
+            let (transaction_witnesses, transaction_witnesses_bytes) = cbor::tee(d, |d| d.decode_with(ctx))?;
 
-            let ((auxiliary_data, auxiliary_data_sizes), auxiliary_data_bytes) =
-                cbor::tee(d, |d| cbor::decode_map_with_value_sizes::<u32, AuxiliaryData, _>(d, ctx, |d| d.u32()))?;
+            let (auxiliary_data, auxiliary_data_bytes) = cbor::tee(d, |d| d.decode_with(ctx))?;
 
             let (invalid_transactions, invalid_transactions_bytes) = cbor::tee(d, |d| d.decode_with(ctx))?;
-
-            // Pre-compute the per-transaction size matching Haskell's logic.
-            // Importantly, the serialization the Haskell node does is different from the on-chain serialization.
-            // The logic below is from: https://github.com/IntersectMBO/cardano-ledger/blob/0cfbf861cfb456660a7b73281c6fb714a53d40f9/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/Tx.hs#L351-L362
-            //
-            //   encodeListLen 3
-            //     <> encCBOR body
-            //     <> encCBOR witnesses
-            //     <> encodeNullStrictMaybe encCBOR aux
-            //
-            // Notably, the array length is 3, NOT 4, and the isValid flag is intentionally
-            // excluded for backward compatibility with pre-Alonzo eras. Aux data is encoded as
-            // CBOR `null` (0xf6, 1 byte) when absent.
-            const TX_FRAMING_BYTES: u64 = 1; // array(3) header = 0x83
-            const NULL_AUX_DATA_BYTES: u64 = 1; // CBOR null = 0xf6
-            let transaction_sizes: Vec<u64> = transaction_body_sizes
-                .iter()
-                .zip(transaction_witness_sizes.iter())
-                .enumerate()
-                .map(|(i, (body_size, witness_size))| {
-                    let aux_size = auxiliary_data_sizes.get(&(i as u32)).copied().unwrap_or(NULL_AUX_DATA_BYTES);
-                    TX_FRAMING_BYTES + body_size + witness_size + aux_size
-                })
-                .collect();
 
             let mut block_body_hash = Vec::with_capacity(4 * BLOCK_BODY);
             for component in [
@@ -183,7 +161,6 @@ impl<'b, C> cbor::Decode<'b, C> for Block {
                 original_header_size: header_bytes.len() as u64,
                 hash: Hasher::<{ 8 * BLOCK_BODY }>::hash(&block_body_hash[..]),
                 header_hash: Hasher::<{ 8 * HEADER }>::hash(header_bytes),
-                transaction_sizes,
                 header,
                 transaction_bodies,
                 transaction_witnesses,

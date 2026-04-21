@@ -34,3 +34,9 @@ pub struct Transaction {
     #[n(3)]
     pub auxiliary_data: Option<AuxiliaryData>,
 }
+
+pub struct SizedTransaction {
+    pub index: u32,
+    pub transaction: Transaction,
+    pub size: u64,
+}

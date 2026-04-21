@@ -34,10 +34,11 @@ use crate::{
 ///   <https://github.com/IntersectMBO/cardano-ledger/blob/fe0af09c8667bf8ffdd17dd1a387515b9b0533bf/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/TxWits.hs#L610-L624>
 ///
 ///   Importantly, this behaviour is changing again in v12, back to being a non-empty set / maps.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, cbor::Encode)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, cbor::Encode)]
 #[cbor(map)]
 pub struct WitnessSet {
     #[cbor(skip)]
+    #[serde(default)]
     original_size: u64,
 
     #[n(0)]
@@ -66,6 +67,22 @@ pub struct WitnessSet {
 
     #[n(7)]
     pub plutus_v3_script: Option<NonEmptyVec<PlutusScript<3>>>,
+}
+
+impl Default for WitnessSet {
+    fn default() -> Self {
+        Self {
+            original_size: 1, // empty CBOR map = 0xa0 = 1 byte
+            vkeywitness: None,
+            native_script: None,
+            bootstrap_witness: None,
+            plutus_v1_script: None,
+            plutus_data: None,
+            redeemer: None,
+            plutus_v2_script: None,
+            plutus_v3_script: None,
+        }
+    }
 }
 
 impl<'b, C> cbor::Decode<'b, C> for WitnessSet {

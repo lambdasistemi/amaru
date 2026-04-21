@@ -107,7 +107,11 @@ impl IntoIterator for Block {
                     + witnesses.len()
                     + auxiliary_data.as_ref().map(|a| a.len()).unwrap_or(NULL_AUX_DATA_BYTES);
 
-                SizedTransaction { index, transaction: Transaction { body, witnesses, is_expected_valid, auxiliary_data }, size }
+                SizedTransaction {
+                    index,
+                    transaction: Transaction { body, witnesses, is_expected_valid, auxiliary_data },
+                    size,
+                }
             })
             .collect::<Vec<_>>()
             .into_iter()

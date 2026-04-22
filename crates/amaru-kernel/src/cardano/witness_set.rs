@@ -15,8 +15,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    BootstrapWitness, HasScriptHash, Hash, MemoizedNativeScript, MemoizedPlutusData, NonEmptyVec, PlutusScript,
-    Redeemers, ScriptKind, VKeyWitness, cbor, size::SCRIPT,
+    BootstrapWitness, HasScriptHash, Hash, MemoizedNativeScript, NonEmptyVec, PlutusDataSet, PlutusScript, Redeemers,
+    ScriptKind, VKeyWitness, cbor, size::SCRIPT,
 };
 
 /// FIXME: Accidentally not a set
@@ -53,7 +53,7 @@ pub struct WitnessSet {
     pub plutus_v1_script: Option<NonEmptyVec<PlutusScript<1>>>,
 
     #[n(4)]
-    pub plutus_data: Option<NonEmptyVec<MemoizedPlutusData>>,
+    pub plutus_data: Option<PlutusDataSet>,
 
     #[n(5)]
     pub redeemer: Option<Redeemers>,

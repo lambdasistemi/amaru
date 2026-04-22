@@ -887,6 +887,12 @@ impl<'a> From<&'a NonEmptyVec<MemoizedPlutusData>> for Datums<'a> {
     }
 }
 
+impl<'a> From<&'a amaru_kernel::PlutusDataSet> for Datums<'a> {
+    fn from(plutus_data: &'a amaru_kernel::PlutusDataSet) -> Self {
+        Self::from(&**plutus_data)
+    }
+}
+
 #[doc(hidden)]
 pub struct Redeemers<'a>(BTreeMap<OrderedRedeemer<'a>, ScriptPurpose<'a>>);
 

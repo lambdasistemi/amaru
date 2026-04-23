@@ -760,6 +760,10 @@ mod tests {
             vec![]
         }
 
+        fn mempool_txs(&self) -> Vec<Transaction> {
+            vec![]
+        }
+
         fn last_seq_no(&self) -> MempoolSeqNo {
             MempoolSeqNo(0)
         }
@@ -802,6 +806,10 @@ mod tests {
         }
 
         fn get_txs_for_ids(&self, _ids: &[TxId]) -> Vec<Transaction> {
+            vec![]
+        }
+
+        fn mempool_txs(&self) -> Vec<Transaction> {
             vec![]
         }
 

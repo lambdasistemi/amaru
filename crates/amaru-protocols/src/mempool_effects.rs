@@ -69,6 +69,14 @@ impl<T: SendData + Sync> TxSubmissionMempool<Transaction> for MemoryPool<T> {
         self.external_sync(GetTxsForIds::new(ids))
     }
 
+    fn mempool_txs(&self) -> Vec<Transaction> {
+        self.external_sync(MempoolTxs)
+    }
+
+    fn remove_txs(&self, ids: &[TxId]) -> Result<(), MempoolError> {
+        self.external_sync(RemoveTxs::new(ids))
+    }
+
     /// This effect gets the last assigned sequence number in the mempool.
     fn last_seq_no(&self) -> MempoolSeqNo {
         self.external_sync(LastSeqNo)
@@ -188,6 +196,52 @@ impl ExternalEffectAPI for GetTxsForIds {
 impl ExternalEffectSync for GetTxsForIds {}
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct MempoolTxs;
+
+impl ExternalEffect for MempoolTxs {
+    #[expect(clippy::expect_used)]
+    fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
+        Self::wrap_sync({
+            let mempool = resources.get::<ResourceMempool<Transaction>>().expect("ResourceMempool requires a mempool");
+            mempool.mempool_txs()
+        })
+    }
+}
+
+impl ExternalEffectAPI for MempoolTxs {
+    type Response = Vec<Transaction>;
+}
+
+impl ExternalEffectSync for MempoolTxs {}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct RemoveTxs {
+    tx_ids: Vec<TxId>,
+}
+
+impl RemoveTxs {
+    pub fn new(ids: &[TxId]) -> Self {
+        Self { tx_ids: ids.to_vec() }
+    }
+}
+
+impl ExternalEffect for RemoveTxs {
+    #[expect(clippy::expect_used)]
+    fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
+        Self::wrap_sync({
+            let mempool = resources.get::<ResourceMempool<Transaction>>().expect("ResourceMempool requires a mempool");
+            mempool.remove_txs(&self.tx_ids)
+        })
+    }
+}
+
+impl ExternalEffectAPI for RemoveTxs {
+    type Response = Result<(), MempoolError>;
+}
+
+impl ExternalEffectSync for RemoveTxs {}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct LastSeqNo;
 
 impl ExternalEffect for LastSeqNo {
@@ -241,6 +295,14 @@ mod tests {
 
         fn get_txs_for_ids(&self, _ids: &[TxId]) -> Vec<Transaction> {
             vec![self.tx.clone()]
+        }
+
+        fn mempool_txs(&self) -> Vec<Transaction> {
+            vec![self.tx.clone()]
+        }
+
+        fn remove_txs(&self, _ids: &[TxId]) -> Result<(), MempoolError> {
+            Ok(())
         }
 
         fn last_seq_no(&self) -> MempoolSeqNo {

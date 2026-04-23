@@ -53,6 +53,9 @@ pub use withdrawals::InvalidWithdrawals;
 pub mod scripts;
 pub use scripts::InvalidScripts;
 
+pub mod validity_interval;
+pub use validity_interval::InvalidValidityInterval;
+
 pub mod mint;
 
 #[derive(Debug, Error)]
@@ -83,6 +86,9 @@ pub enum PhaseOneError {
 
     #[error("invalid transaction metadata: {0}")]
     Metadata(#[from] InvalidTransactionMetadata),
+
+    #[error("invalid transaction validity interval: {0}")]
+    ValidityInterval(#[from] InvalidValidityInterval),
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -102,6 +108,8 @@ where
     C: ValidationContext + fmt::Debug,
 {
     let transaction_id = transaction_body.id();
+
+    validity_interval::execute(&transaction_body, transaction_witness_set, era_history, pointer.slot)?;
 
     metadata::execute(&transaction_body, transaction_auxiliary_data)?;
 

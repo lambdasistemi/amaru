@@ -20,7 +20,9 @@ use std::{
 
 use amaru_kernel::{
     HasRedeemers, Hash, Hasher, Language, LanguageView, MemoizedDatum, ProtocolParameters, RedeemerKey, RequiredScript,
-    ScriptKind, ScriptPurpose, WitnessSet, cbor, cbor::Encode, script_purpose_to_string,
+    ScriptKind, ScriptPurpose, WitnessSet, cbor,
+    cbor::Encode,
+    script_purpose_to_string,
     size::{DATUM, SCRIPT},
     utils::string::display_collection,
 };

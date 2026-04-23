@@ -16,14 +16,15 @@ use std::sync::Arc;
 
 use amaru_consensus::{
     effects::{
-        ResourceBlockValidation, ResourceHasStakePools, ResourceHeaderValidation, ResourceMeter, ResourceTxValidation,
+        ResourceBlockValidation, ResourceEraHistory, ResourceHasStakePools, ResourceHeaderValidation, ResourceMeter,
+        ResourceTxValidation,
     },
     stages::select_chain::cmp_tip,
     validate_header::ValidateHeader,
 };
 use amaru_kernel::{
-    BlockHeader, BlockHeight, ConsensusParameters, EraHistory, GlobalParameters, IsHeader, ORIGIN_HASH, Peer, Point,
-    Transaction,
+    BlockHeader, BlockHeight, ConsensusParameters, EraHistory, GlobalParameters, IsHeader, Peer, Point, Transaction,
+    ORIGIN_HASH,
 };
 use amaru_mempool::InMemoryMempool;
 use amaru_metrics::METRICS_METER_NAME;
@@ -34,19 +35,19 @@ use amaru_protocols::{
     store_effects::{ResourceHeaderStore, ResourceParameters},
 };
 use amaru_stores::rocksdb::consensus::RocksDBStore;
-use anyhow::{Context, anyhow};
+use anyhow::{anyhow, Context};
 use opentelemetry::metrics::MeterProvider;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use parking_lot::Mutex;
 use pure_stage::{
-    BoxFuture, Sender, StageGraph, StageGraphRunning,
     tokio::{TokioBuilder, TokioRunning},
     trace_buffer::TraceBuffer,
+    BoxFuture, Sender, StageGraph, StageGraphRunning,
 };
 use tokio::runtime::Handle;
 
 use crate::stages::{
-    build_stage_graph::{NodeStages, build_stage_graph},
+    build_stage_graph::{build_stage_graph, NodeStages},
     config::{Config, StoreType},
     ledger::Ledger,
 };
@@ -169,7 +170,15 @@ pub fn build_node(
         make_validate_header(global_parameters, era_history, chain_store.clone(), ledger.get_stake_distribution()?);
 
     // Register resources
-    register_resources(stage_builder, chain_store, global_parameters, ledger, validate_header, meter_provider);
+    register_resources(
+        stage_builder,
+        chain_store,
+        global_parameters,
+        era_history,
+        ledger,
+        validate_header,
+        meter_provider,
+    );
 
     // Build the stage graph and return a reference to the manager stage
     let best_candidate = best_candidate.map(|h| (h, best_missing));
@@ -202,12 +211,14 @@ fn register_resources(
     stage_graph: &mut impl StageGraph,
     chain_store: Arc<dyn ChainStore<BlockHeader>>,
     global_parameters: &GlobalParameters,
+    era_history: &EraHistory,
     ledger: Ledger,
     validate_header: ValidateHeader,
     meter_provider: Option<SdkMeterProvider>,
 ) {
     stage_graph.resources().put::<ResourceHeaderStore>(chain_store);
     stage_graph.resources().put::<ResourceParameters>(global_parameters.clone());
+    stage_graph.resources().put::<ResourceEraHistory>(era_history.clone());
     stage_graph.resources().put::<ResourceBlockValidation>(ledger.get_block_validation());
     stage_graph.resources().put::<ResourceHasStakePools>(ledger.get_stake_pools());
     stage_graph.resources().put::<ResourceHeaderValidation>(Arc::new(validate_header));

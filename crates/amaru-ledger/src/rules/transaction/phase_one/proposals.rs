@@ -238,7 +238,8 @@ mod tests {
     use std::mem;
 
     use amaru_kernel::{
-        EraHistory, NetworkName, Slot, TransactionBody, TransactionPointer, include_cbor, include_json, json,
+        EraHistory, NetworkName, ProtocolVersion, Slot, TransactionBody, TransactionPointer, include_cbor,
+        include_json, json,
     };
     use amaru_tracing_json::assert_trace;
     use test_case::test_case;
@@ -291,5 +292,21 @@ mod tests {
             },
             expected_traces,
         )
+    }
+
+    #[test_case((9, 0), (10, 0), true;  "major bump from (9,0) to (10,0)")]
+    #[test_case((9, 5), (10, 0), true;  "major bump resets minor regardless of previous minor")]
+    #[test_case((9, 0), (9, 1),  true;  "minor bump from (9,0) to (9,1)")]
+    #[test_case((10, 5), (10, 6), true; "minor bump from non-zero minor")]
+    #[test_case((9, 0), (10, 1), false; "major bump must reset minor to 0")]
+    #[test_case((9, 0), (9, 0),  false; "cannot have a no-change")]
+    #[test_case((9, 0), (11, 0), false; "cannot skip a major version")]
+    #[test_case((9, 0), (9, 2),  false; "cannot skip a minor version")]
+    #[test_case((10, 0), (9, 0), false; "cannot decrement major")]
+    #[test_case((9, 5), (9, 4),  false; "cannot decrement minor")]
+    #[test_case((10, 5), (9, 0), false; "cannot decrement major even with minor reset")]
+    #[test_case((9, 1), (10, 1), false; "major bump with non-zero new minor is rejected even if minor matches current")]
+    fn test_pv_can_follow(current: ProtocolVersion, new: ProtocolVersion, expected: bool) {
+        assert_eq!(super::pv_can_follow(current, new), expected);
     }
 }

@@ -19,14 +19,43 @@ use std::{
 };
 
 use amaru_kernel::{
-    HasRedeemers, Hash, MemoizedDatum, RedeemerKey, RequiredScript, ScriptKind, ScriptPurpose, WitnessSet,
-    script_purpose_to_string,
+    HasRedeemers, HasScriptHash, Hash, MemoizedDatum, MemoizedScript, NativeScript, PlutusScript, RedeemerKey,
+    RequiredScript, ScriptKind, ScriptPurpose, WitnessSet, script_purpose_to_string,
     size::{DATUM, SCRIPT},
     utils::string::display_collection,
 };
 use thiserror::Error;
 
 use crate::context::{UtxoSlice, WitnessSlice};
+
+pub(super) enum ProvidedScript<'a> {
+    Native(&'a NativeScript),
+    PlutusV1,
+    PlutusV2,
+    PlutusV3,
+}
+
+impl ProvidedScript<'_> {
+    pub(super) fn kind(&self) -> ScriptKind {
+        match self {
+            Self::Native(_) => ScriptKind::Native,
+            Self::PlutusV1 => ScriptKind::PlutusV1,
+            Self::PlutusV2 => ScriptKind::PlutusV2,
+            Self::PlutusV3 => ScriptKind::PlutusV3,
+        }
+    }
+}
+
+impl<'a> From<&'a MemoizedScript> for ProvidedScript<'a> {
+    fn from(script: &'a MemoizedScript) -> Self {
+        match script {
+            MemoizedScript::NativeScript(ns) => Self::Native(ns.as_ref()),
+            MemoizedScript::PlutusV1Script(_) => Self::PlutusV1,
+            MemoizedScript::PlutusV2Script(_) => Self::PlutusV2,
+            MemoizedScript::PlutusV3Script(_) => Self::PlutusV3,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum InvalidScripts {
@@ -69,10 +98,17 @@ pub enum InvalidScripts {
         )).collect::<Vec<_>>().join(", ")
     )]
     MissingRedeemers(Vec<RedeemerKey>),
+    #[error("native script(s) failed to validate: [{}]", display_collection(.0))]
+    ScriptWitnessNotValidatingUTXOW(BTreeSet<Hash<SCRIPT>>),
 }
 
 // TODO: Split this whole function into smaller functions to make it more graspable.
-pub fn execute<C>(context: &mut C, witness_set: &WitnessSet) -> Result<(), InvalidScripts>
+pub fn execute<C>(
+    context: &mut C,
+    witness_set: &WitnessSet,
+    validity_interval_start: Option<u64>,
+    validity_interval_end: Option<u64>,
+) -> Result<(), InvalidScripts>
 where
     C: UtxoSlice + WitnessSlice + fmt::Debug,
 {
@@ -82,6 +118,14 @@ where
         required_scripts.iter().map(|RequiredScript { hash, .. }| hash).collect();
 
     let provided_scripts = collect_provided_scripts(context, &required_script_hashes, witness_set);
+
+    super::native_scripts::execute(
+        &provided_scripts,
+        &required_script_hashes,
+        witness_set,
+        validity_interval_start,
+        validity_interval_end,
+    )?;
 
     let required_scripts = fail_on_script_symmetric_differences(required_scripts, &provided_scripts)?;
 
@@ -113,8 +157,6 @@ where
         return Err(InvalidScripts::ExtraneousRedeemers(extra_redeemers));
     }
 
-    // TODO: evaluate scripts
-
     Ok(())
 }
 
@@ -127,13 +169,13 @@ where
 /// The function fails if there's any input with missing mandatory datum (i.e. Plutus V1 or V2
 /// script-locked inputs without datum; those are simply "forever" unspendable).
 fn partition_scripts(
-    required_scripts: Vec<(RequiredScript, &ScriptKind)>,
+    required_scripts: Vec<(RequiredScript, ScriptKind)>,
 ) -> Result<(Vec<RedeemerKey>, BTreeSet<Hash<DATUM>>), InvalidScripts> {
     let mut required_redeemers = Vec::new();
     let mut required_datums = BTreeSet::new();
     let mut missing_datums = BTreeSet::new();
 
-    required_scripts.iter().for_each(|(required_script, script)| {
+    required_scripts.iter().for_each(|(required_script, kind)| {
         let RequiredScript { index, datum, hash: _, purpose } = required_script;
 
         let mut require_redeemer = || required_redeemers.push(RedeemerKey::from(required_script));
@@ -151,7 +193,7 @@ fn partition_scripts(
             MemoizedDatum::Inline(..) | MemoizedDatum::None => {}
         };
 
-        match script {
+        match kind {
             // NOTE: One may very well send some funds to a native script, and attach a
             // datum hash to it. In which case, the datum has no effect and is simply
             // ignored.
@@ -195,7 +237,7 @@ fn collect_provided_scripts<'a, C>(
     context: &'a mut C,
     required: &BTreeSet<&Hash<SCRIPT>>,
     witness_set: &'a WitnessSet,
-) -> BTreeMap<Hash<SCRIPT>, ScriptKind>
+) -> BTreeMap<Hash<SCRIPT>, ProvidedScript<'a>>
 where
     C: WitnessSlice,
 {
@@ -204,18 +246,39 @@ where
         .into_iter()
         // We only consider script references required by the transaction
         .filter_map(|(script_hash, script_ref)| {
-            if required.contains(&script_hash) { Some((script_hash, ScriptKind::from(script_ref))) } else { None }
+            if required.contains(&script_hash) { Some((script_hash, ProvidedScript::from(script_ref))) } else { None }
         });
 
-    witness_set.get_provided_scripts().into_iter().chain(referenced).collect()
+    witness_provided_scripts(witness_set).chain(referenced).collect()
+}
+
+fn witness_provided_scripts(witness_set: &WitnessSet) -> impl Iterator<Item = (Hash<SCRIPT>, ProvidedScript<'_>)> {
+    fn from_plutus<'a, const V: usize>(
+        scripts: Option<&'a [PlutusScript<V>]>,
+        kind: fn() -> ProvidedScript<'a>,
+    ) -> impl Iterator<Item = (Hash<SCRIPT>, ProvidedScript<'a>)> {
+        scripts.into_iter().flatten().map(move |s| (s.script_hash(), kind()))
+    }
+
+    let natives = witness_set
+        .native_script
+        .as_deref()
+        .into_iter()
+        .flatten()
+        .map(|ns| (ns.script_hash(), ProvidedScript::Native(ns.as_ref())));
+
+    natives
+        .chain(from_plutus(witness_set.plutus_v1_script.as_deref(), || ProvidedScript::PlutusV1))
+        .chain(from_plutus(witness_set.plutus_v2_script.as_deref(), || ProvidedScript::PlutusV2))
+        .chain(from_plutus(witness_set.plutus_v3_script.as_deref(), || ProvidedScript::PlutusV3))
 }
 
 /// Ensures that the required and provided scripts match exactly (i.e. check that they're included
 /// in each other).
 fn fail_on_script_symmetric_differences(
     required: BTreeSet<RequiredScript>,
-    provided: &BTreeMap<Hash<SCRIPT>, ScriptKind>,
-) -> Result<Vec<(RequiredScript, &ScriptKind)>, InvalidScripts> {
+    provided: &BTreeMap<Hash<SCRIPT>, ProvidedScript<'_>>,
+) -> Result<Vec<(RequiredScript, ScriptKind)>, InvalidScripts> {
     let mut missing = BTreeSet::new();
     let mut existing = BTreeSet::new();
 
@@ -223,8 +286,8 @@ fn fail_on_script_symmetric_differences(
         .into_iter()
         .filter_map(|script| {
             existing.insert(script.hash);
-            if let Some(borrowed) = provided.get(&script.hash) {
-                Some((script, borrowed))
+            if let Some(provided) = provided.get(&script.hash) {
+                Some((script, provided.kind()))
             } else {
                 missing.insert(script.hash);
                 None
@@ -325,7 +388,7 @@ fn fail_on_missing_datums(missing: BTreeSet<u32>) -> Result<(), InvalidScripts> 
 
 #[cfg(test)]
 mod tests {
-    use amaru_kernel::{WitnessSet, include_cbor};
+    use amaru_kernel::{TransactionBody, WitnessSet, include_cbor};
     use test_case::test_case;
 
     use super::InvalidScripts;
@@ -333,11 +396,16 @@ mod tests {
 
     macro_rules! fixture {
         ($hash:literal) => {
-            (fixture_context!($hash), include_cbor!(concat!("transactions/preprod/", $hash, "/witness.cbor")))
+            (
+                fixture_context!($hash),
+                include_cbor!(concat!("transactions/preprod/", $hash, "/tx.cbor")),
+                include_cbor!(concat!("transactions/preprod/", $hash, "/witness.cbor")),
+            )
         };
         ($hash:literal, $variant:literal) => {
             (
                 fixture_context!($hash, $variant),
+                include_cbor!(concat!("transactions/preprod/", $hash, "/tx.cbor")),
                 include_cbor!(concat!("transactions/preprod/", $hash, "/", $variant, "/witness.cbor")),
             )
         };
@@ -379,7 +447,13 @@ mod tests {
         "extraneous redeemer"
     )]
     #[test_case(fixture!("83036e0c9851c1df44157a8407b1daa34f25549e0644f432e655bd80b0429eba"); "duplicate redeemers")]
-    fn test_scripts((mut ctx, witness_set): (AssertValidationContext, WitnessSet)) -> Result<(), InvalidScripts> {
-        super::execute(&mut ctx, &witness_set)
+    #[test_case(fixture!("ebd7cda7805bc5b89c0fb3c8ad44f6549ab72c1040eb47019146e3f5f98298e1", "native-script-fails") =>
+        matches Err(InvalidScripts::ScriptWitnessNotValidatingUTXOW(..));
+        "native script fails to validate"
+    )]
+    fn test_scripts(
+        (mut ctx, tx, witness_set): (AssertValidationContext, TransactionBody, WitnessSet),
+    ) -> Result<(), InvalidScripts> {
+        super::execute(&mut ctx, &witness_set, tx.validity_interval_start, tx.validity_interval_end)
     }
 }

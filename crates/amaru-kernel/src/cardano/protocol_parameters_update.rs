@@ -178,3 +178,38 @@ pub fn display_protocol_parameters_update(update: &ProtocolParamUpdate, prefix: 
 
     Ok(s)
 }
+
+pub fn default_protocol_param_update() -> ProtocolParamUpdate {
+    ProtocolParamUpdate {
+        minfee_a: Default::default(),
+        minfee_b: Default::default(),
+        max_block_body_size: Default::default(),
+        max_transaction_size: Default::default(),
+        max_block_header_size: Default::default(),
+        key_deposit: Default::default(),
+        pool_deposit: Default::default(),
+        maximum_epoch: Default::default(),
+        desired_number_of_stake_pools: Default::default(),
+        pool_pledge_influence: Default::default(),
+        expansion_rate: Default::default(),
+        treasury_growth_rate: Default::default(),
+        min_pool_cost: Default::default(),
+        ada_per_utxo_byte: Default::default(),
+        cost_models_for_script_languages: Default::default(),
+        execution_costs: Default::default(),
+        max_tx_ex_units: Default::default(),
+        max_block_ex_units: Default::default(),
+        max_value_size: Default::default(),
+        collateral_percentage: Default::default(),
+        max_collateral_inputs: Default::default(),
+        pool_voting_thresholds: Default::default(),
+        drep_voting_thresholds: Default::default(),
+        min_committee_size: Default::default(),
+        committee_term_limit: Default::default(),
+        governance_action_validity_period: Default::default(),
+        governance_action_deposit: Default::default(),
+        drep_deposit: Default::default(),
+        drep_inactivity_period: Default::default(),
+        minfee_refscript_cost_per_byte: Default::default(),
+    }
+}

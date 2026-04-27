@@ -55,15 +55,15 @@ where
                     })?;
 
                 if network != &account_network {
-                    Err(InvalidWithdrawals::NetworkMismatch {
+                    return Err(InvalidWithdrawals::NetworkMismatch {
                         expected: *network,
                         received: account_network,
                         context: TransactionField::Withdrawals,
                         position,
-                    })
-                } else {
-                    Ok((credential, st))
+                    });
                 }
+
+                Ok((credential, st))
             })
             // NOTE: Force withdrawals to be sorted by stake credentials
             .collect::<Result<BTreeMap<_, _>, _>>()?

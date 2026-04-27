@@ -98,7 +98,7 @@ fn validate_bootstrap_attributes(output: &MemoizedTransactionOutput) -> Result<(
     if let Address::Byron(addr) = &output.address {
         // This logic assumes the address (and thus the payload) has already been checked
         let Some(payload) = from_cbor::<AddressPayload>(&addr.payload.0) else {
-            return Ok(());
+            unreachable!("failed to decode address payload during bootstrap attribute validation: {addr:?}");
         };
 
         // This differs from the Haskell logic:

@@ -15,7 +15,8 @@
 use amaru_kernel::{
     Address, Epoch, EraHistory, GovernanceAction, Hash, Lovelace, MemoizedDatum, Network, Nullable, Proposal,
     ProposalId, ProposalPointer, ProtocolParamUpdate, ProtocolParameters, ProtocolVersion, RequiredScript,
-    ScriptPurpose, TransactionId, TransactionPointer, size::SCRIPT,
+    ScriptPurpose, TransactionId, TransactionPointer,
+    cardano::protocol_parameters_update::default_protocol_param_update, size::SCRIPT,
 };
 use thiserror::Error;
 
@@ -130,7 +131,7 @@ fn validate_proposal(
                     _ => return Err(InvalidProposals::MalformedReturnAddress),
                 }
             }
-            if !wdrls.iter().any(|(_, coin)| *coin > 0) {
+            if wdrls.iter().all(|(_, coin)| *coin == 0) {
                 return Err(InvalidProposals::ZeroTreasuryWithdrawals);
             }
         }
@@ -209,38 +210,7 @@ fn ppu_well_formed(pv: ProtocolVersion, ppu: &ProtocolParamUpdate) -> Result<(),
         reject_zero(ppu.ada_per_utxo_byte, "ada_per_utxo_byte")?;
     }
 
-    let is_empty = ppu.minfee_a.is_none()
-        && ppu.minfee_b.is_none()
-        && ppu.max_block_body_size.is_none()
-        && ppu.max_transaction_size.is_none()
-        && ppu.max_block_header_size.is_none()
-        && ppu.key_deposit.is_none()
-        && ppu.pool_deposit.is_none()
-        && ppu.maximum_epoch.is_none()
-        && ppu.desired_number_of_stake_pools.is_none()
-        && ppu.pool_pledge_influence.is_none()
-        && ppu.expansion_rate.is_none()
-        && ppu.treasury_growth_rate.is_none()
-        && ppu.min_pool_cost.is_none()
-        && ppu.ada_per_utxo_byte.is_none()
-        && ppu.cost_models_for_script_languages.is_none()
-        && ppu.execution_costs.is_none()
-        && ppu.max_tx_ex_units.is_none()
-        && ppu.max_block_ex_units.is_none()
-        && ppu.max_value_size.is_none()
-        && ppu.collateral_percentage.is_none()
-        && ppu.max_collateral_inputs.is_none()
-        && ppu.pool_voting_thresholds.is_none()
-        && ppu.drep_voting_thresholds.is_none()
-        && ppu.min_committee_size.is_none()
-        && ppu.committee_term_limit.is_none()
-        && ppu.governance_action_validity_period.is_none()
-        && ppu.governance_action_deposit.is_none()
-        && ppu.drep_deposit.is_none()
-        && ppu.drep_inactivity_period.is_none()
-        && ppu.minfee_refscript_cost_per_byte.is_none();
-
-    if is_empty {
+    if ppu == &default_protocol_param_update() {
         return Err(InvalidProposals::MalformedProposal { reason: "parameter update cannot be empty".into() });
     }
 

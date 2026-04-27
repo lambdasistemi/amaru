@@ -106,7 +106,8 @@ impl<'b, C> cbor::Decode<'b, C> for WitnessSet {
                     6 => ws.plutus_v2_script = d.decode_with(ctx)?,
                     7 => ws.plutus_v3_script = d.decode_with(ctx)?,
                     _ => {
-                        d.skip()?;
+                        return Err(cbor::decode::Error::message(format!("unexpected field key {k} in witness set"))
+                            .at(d.position()));
                     }
                 };
                 Ok(())

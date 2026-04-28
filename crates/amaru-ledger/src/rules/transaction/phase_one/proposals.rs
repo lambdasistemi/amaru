@@ -283,7 +283,7 @@ mod tests {
                 super::execute(
                     &mut ctx,
                     amaru_kernel::Network::Testnet,
-                    &amaru_kernel::PREPROD_INITIAL_PROTOCOL_PARAMETERS,
+                    &amaru_kernel::PREPROD_DEFAULT_PROTOCOL_PARAMETERS,
                     <&EraHistory>::from(NetworkName::Preprod),
                     (tx.id(), tx_pointer),
                     mem::take(&mut tx.proposals).map(|xs| xs.to_vec()),

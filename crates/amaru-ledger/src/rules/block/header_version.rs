@@ -39,7 +39,7 @@ mod tests {
         ($number:literal) => {
             (
                 include_cbor!(concat!("blocks/preprod/", $number, "/valid.cbor")),
-                amaru_kernel::PREPROD_INITIAL_PROTOCOL_PARAMETERS.clone(),
+                amaru_kernel::PREPROD_DEFAULT_PROTOCOL_PARAMETERS.clone(),
             )
         };
         ($number:literal, $pp:expr) => {
@@ -50,7 +50,7 @@ mod tests {
     #[test_case(fixture!("2667657"); "valid")]
     #[test_case(fixture!("2667657", ProtocolParameters {
         protocol_version: (0, 0),
-        ..amaru_kernel::PREPROD_INITIAL_PROTOCOL_PARAMETERS.clone()
+        ..amaru_kernel::PREPROD_DEFAULT_PROTOCOL_PARAMETERS.clone()
     }) => matches Err(InvalidBlockDetails::HeaderProtVerTooHigh { header_major: 9, max_major: 1 }); "header version too high")]
     fn test_header_version((block, pp): (Block, ProtocolParameters)) -> Result<(), InvalidBlockDetails> {
         super::block_header_version_valid(&block, &pp)

@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 
 use amaru_kernel::{
     cbor, Address, Block, EraHistory, GlobalParameters, Hash, Hasher, MemoizedTransactionOutput, NetworkName, Point,
-    ProtocolParameters, Tip, TransactionInput, Value, PREPROD_INITIAL_PROTOCOL_PARAMETERS,
-    PREVIEW_INITIAL_PROTOCOL_PARAMETERS,
+    ProtocolParameters, Tip, TransactionInput, Value, PREPROD_DEFAULT_PROTOCOL_PARAMETERS,
+    PREVIEW_DEFAULT_PROTOCOL_PARAMETERS,
 };
 use amaru_ledger::{
     context,
@@ -48,8 +48,8 @@ pub fn forward_ledger(raw_block: &str) {
     let protocol_parameters = ProtocolParameters {
         gov_action_deposit: 50_000_000_000,
         ..match network {
-            NetworkName::Preprod => PREPROD_INITIAL_PROTOCOL_PARAMETERS.clone(),
-            NetworkName::Preview => PREVIEW_INITIAL_PROTOCOL_PARAMETERS.clone(),
+            NetworkName::Preprod => PREPROD_DEFAULT_PROTOCOL_PARAMETERS.clone(),
+            NetworkName::Preview => PREVIEW_DEFAULT_PROTOCOL_PARAMETERS.clone(),
             NetworkName::Mainnet | NetworkName::Testnet(..) => unimplemented!(),
         }
     };

@@ -26,7 +26,7 @@ use amaru_kernel::{
     BlockHeader, BlockHeight, ConsensusParameters, EraHistory, GlobalParameters, IsHeader, Peer, Point, Transaction,
     ORIGIN_HASH,
 };
-use amaru_mempool::InMemoryMempool;
+use amaru_mempool::{InMemoryMempool, MempoolConfig};
 use amaru_metrics::METRICS_METER_NAME;
 use amaru_network::connection::TokioConnections;
 use amaru_ouroboros::{ChainStore, ConnectionsResource, HasStakeDistribution, MempoolMsg, ResourceMempool};
@@ -178,6 +178,7 @@ pub fn build_node(
         ledger,
         validate_header,
         meter_provider,
+        config.mempool.clone(),
     );
 
     // Build the stage graph and return a reference to the manager stage
@@ -207,6 +208,7 @@ pub fn build_node(
 
 /// Register the resources required by the external effects invoked by the stages in the stage graph.
 /// It is possible to override those resources later on.
+#[allow(clippy::too_many_arguments)]
 fn register_resources(
     stage_graph: &mut impl StageGraph,
     chain_store: Arc<dyn ChainStore<BlockHeader>>,
@@ -215,6 +217,7 @@ fn register_resources(
     ledger: Ledger,
     validate_header: ValidateHeader,
     meter_provider: Option<SdkMeterProvider>,
+    mempool_config: MempoolConfig,
 ) {
     stage_graph.resources().put::<ResourceHeaderStore>(chain_store);
     stage_graph.resources().put::<ResourceParameters>(global_parameters.clone());
@@ -224,7 +227,7 @@ fn register_resources(
     stage_graph.resources().put::<ResourceHeaderValidation>(Arc::new(validate_header));
     stage_graph.resources().put::<ResourceTxValidation>(ledger.get_tx_validation());
     stage_graph.resources().put::<ConnectionsResource>(Arc::new(TokioConnections::new(65535)));
-    stage_graph.resources().put::<ResourceMempool<Transaction>>(Arc::new(InMemoryMempool::default()));
+    stage_graph.resources().put::<ResourceMempool<Transaction>>(Arc::new(InMemoryMempool::new(mempool_config)));
 
     if let Some(provider) = meter_provider {
         let meter = provider.meter(METRICS_METER_NAME);

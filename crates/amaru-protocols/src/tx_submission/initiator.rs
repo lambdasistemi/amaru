@@ -451,7 +451,7 @@ impl AsRef<StageRef<MuxMessage>> for TxSubmissionInitiator {
 mod tests {
     use std::sync::Arc;
 
-    use amaru_mempool::{InMemoryMempool, MempoolConfig};
+    use amaru_mempool::InMemoryMempool;
     use amaru_ouroboros_traits::TxOrigin;
 
     use super::*;
@@ -460,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn serve_transactions() -> anyhow::Result<()> {
         // Create a mempool with some transactions
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 6);
 
         // Send requests to retrieve transactions and block until they are available.
@@ -500,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn serve_transactions_with_mempool_refilling() -> anyhow::Result<()> {
         // Create a mempool with some transactions
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
         let txs = create_transactions(6);
 
         for tx in txs.iter().take(2) {
@@ -547,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn request_txs_must_come_from_requested_ids() -> anyhow::Result<()> {
         // Create a mempool with some transactions
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 4);
 
         // Send requests to retrieve transactions and block until they are available.
@@ -571,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocking_requested_ids_must_be_greater_than_0() -> anyhow::Result<()> {
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
 
         let results = vec![request_tx_ids(0, 0, Blocking::Yes)];
         let actions = run_stage(mempool, results).await?;
@@ -581,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocking_requested_txs_must_be_greater_than_0() -> anyhow::Result<()> {
-        let mempool = new_mempool(4);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 4);
 
         let results = vec![request_tx_ids(0, 2, Blocking::Yes), request_txs(&txs, &[])];
@@ -593,7 +593,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_blocking_ack_or_requested_ids_must_be_greater_than_0() -> anyhow::Result<()> {
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
 
         let results = vec![request_tx_ids(0, 0, Blocking::No)];
         let actions = run_stage(mempool, results).await?;
@@ -603,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocking_requested_nb_must_be_less_than_protocol_limit() -> anyhow::Result<()> {
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
 
         let results = vec![request_tx_ids(0, 12, Blocking::Yes)];
         let actions = run_stage(mempool, results).await?;
@@ -613,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_blocking_requested_nb_must_be_less_than_protocol_limit() -> anyhow::Result<()> {
-        let mempool = new_mempool(6);
+        let mempool = new_mempool();
 
         let results = vec![request_tx_ids(0, 12, Blocking::No)];
         let actions = run_stage(mempool, results).await?;
@@ -623,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_blocking_request_must_be_made_when_all_txs_are_acknowledged() -> anyhow::Result<()> {
-        let mempool = new_mempool(4);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 4);
 
         let results = vec![
@@ -649,7 +649,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_non_blocking_request_must_be_made_when_some_txs_are_unacknowledged() -> anyhow::Result<()> {
-        let mempool = new_mempool(4);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 4);
 
         let results =
@@ -668,7 +668,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_responder_cannot_acknowledge_more_than_the_current_unacknowledged_blocking() -> anyhow::Result<()> {
-        let mempool = new_mempool(4);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 4);
 
         let results = vec![
@@ -695,7 +695,7 @@ mod tests {
     #[tokio::test]
     async fn the_responder_cannot_acknowledge_more_than_the_current_unacknowledged_non_blocking() -> anyhow::Result<()>
     {
-        let mempool = new_mempool(4);
+        let mempool = new_mempool();
         let txs = create_transactions_in_mempool(mempool.clone(), 4);
 
         let results = vec![
@@ -807,8 +807,8 @@ mod tests {
         InitiatorResult::RequestTxIds { ack, req, blocking }
     }
 
-    fn new_mempool(txs_nb: u64) -> Arc<InMemoryMempool<Transaction>> {
-        Arc::new(InMemoryMempool::new(MempoolConfig::default().with_max_bytes(txs_nb * 16)))
+    fn new_mempool() -> Arc<InMemoryMempool<Transaction>> {
+        Arc::new(InMemoryMempool::default())
     }
 
     fn request_txs(txs: &[Transaction], ids: &[usize]) -> InitiatorResult {

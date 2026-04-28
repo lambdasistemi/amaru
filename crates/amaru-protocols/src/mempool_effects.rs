@@ -81,6 +81,12 @@ impl<T: SendData + Sync> TxSubmissionMempool<Transaction> for MemoryPool<T> {
     fn last_seq_no(&self) -> MempoolSeqNo {
         self.external_sync(LastSeqNo)
     }
+
+    /// This effect returns whether the mempool would be over its configured maximum byte size if accepting
+    /// a transaction of size `additional_bytes`.
+    fn is_near_capacity(&self, additional_bytes: u64) -> bool {
+        self.external_sync(IsNearCapacity { additional_bytes })
+    }
 }
 
 // EXTERNAL EFFECTS DEFINITIONS
@@ -260,6 +266,27 @@ impl ExternalEffectAPI for LastSeqNo {
 
 impl ExternalEffectSync for LastSeqNo {}
 
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct IsNearCapacity {
+    additional_bytes: u64,
+}
+
+impl ExternalEffect for IsNearCapacity {
+    #[expect(clippy::expect_used)]
+    fn run(self: Box<Self>, resources: Resources) -> BoxFuture<'static, Box<dyn SendData>> {
+        Self::wrap_sync({
+            let mempool = resources.get::<ResourceMempool<Transaction>>().expect("ResourceMempool requires a mempool");
+            mempool.is_near_capacity(self.additional_bytes)
+        })
+    }
+}
+
+impl ExternalEffectAPI for IsNearCapacity {
+    type Response = bool;
+}
+
+impl ExternalEffectSync for IsNearCapacity {}
+
 #[cfg(test)]
 mod tests {
     use amaru_kernel::{Transaction, TransactionBody, WitnessSet};
@@ -307,6 +334,10 @@ mod tests {
 
         fn last_seq_no(&self) -> MempoolSeqNo {
             MempoolSeqNo(1)
+        }
+
+        fn is_near_capacity(&self, _additional_bytes: u64) -> bool {
+            false
         }
     }
 }

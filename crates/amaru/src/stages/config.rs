@@ -14,7 +14,7 @@
 
 use std::{fmt::Display, net::SocketAddr, path::PathBuf, sync::Arc};
 
-use amaru_kernel::{BlockHeader, NetworkMagic, NetworkName};
+use amaru_kernel::{BlockHeader, EraHistory, GlobalParameters, NetworkMagic, NetworkName};
 use amaru_ouroboros::ChainStore;
 use amaru_stores::{in_memory::MemoryStore, rocksdb::RocksDbConfig};
 use anyhow::Context;
@@ -26,6 +26,8 @@ pub struct Config {
     pub upstream_peers: Vec<String>,
     pub network: NetworkName,
     pub network_magic: NetworkMagic,
+    pub era_history: EraHistory,
+    pub global_parameters: GlobalParameters,
     pub listen_address: String,
     pub max_downstream_peers: usize,
     pub max_extra_ledger_snapshots: MaxExtraLedgerSnapshots,
@@ -68,12 +70,18 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Config {
+        let network = NetworkName::Preprod;
+        let era_history: &EraHistory = network.into();
+        let global_parameters: &GlobalParameters = network.into();
+
         Config {
             ledger_store: StoreType::RocksDb(RocksDbConfig::new(PathBuf::from("./ledger.db"))),
             chain_store: StoreType::RocksDb(RocksDbConfig::new(PathBuf::from("./chain.db"))),
             upstream_peers: vec![],
-            network: NetworkName::Preprod,
+            network,
             network_magic: NetworkMagic::PREPROD,
+            era_history: era_history.clone(),
+            global_parameters: global_parameters.clone(),
             listen_address: "0.0.0.0:3000".to_string(),
             max_downstream_peers: 10,
             max_extra_ledger_snapshots: MaxExtraLedgerSnapshots::default(),

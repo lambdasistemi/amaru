@@ -254,48 +254,52 @@ fn startup_best_candidate(
 
     // ORIGIN_HASH cannot have a block, so we start from its direct children
     let mut to_visit = if best_chain_hash == ORIGIN_HASH {
-        chain_store.get_children(&best_chain_hash).into_iter().map(|hash| (hash, vec![])).collect()
+        chain_store.get_children(&best_chain_hash).into_iter().collect()
     } else {
-        vec![(best_chain_hash, vec![])]
+        vec![best_chain_hash]
     };
     let mut best_candidate = None;
 
-    while let Some((hash, missing)) = to_visit.pop() {
+    while let Some(hash) = to_visit.pop() {
         // Visit one reachable header.
-        // `missing` is the unknown suffix after the last validated ancestor, excluding `hash`:
-        // it ends at the parent of `hash`.
         tracing::debug!(hash = %hash, "visiting startup candidate");
         let (header, validity) = chain_store
             .load_header_with_validity(&hash)
             .ok_or_else(|| anyhow!("reachable child hash {hash} does not resolve to a stored header"))?;
-        // Prune invalid branches, reset the suffix after a validated header, or extend it with
-        // the current unknown header.
-        let next_missing = match validity {
-            Some(true) => vec![],
-            None => {
-                let mut next_missing = missing;
-                next_missing.push(hash);
-                next_missing
-            }
-            Some(false) => continue,
+
+        // Don't use this header if its block is invalid
+        if validity == Some(false) {
+            continue;
         };
+
         // Continue the traversal with all direct descendants of the current header.
         let children = chain_store.get_children(&hash);
 
-        if children.is_empty() {
-            // Only leaf headers are startup candidates, and only if they still have resumable work.
-            if !next_missing.is_empty()
-                && best_candidate.as_ref().is_none_or(|(current, _)| cmp_tip(Some(&header), Some(current)).is_gt())
-            {
-                best_candidate = Some((header.clone(), next_missing.clone()));
-            }
+        if children.is_empty()
+            && best_candidate.as_ref().is_none_or(|current| cmp_tip(Some(&header), Some(current)).is_gt())
+        {
+            best_candidate = Some(header);
         } else {
             // Propagate the updated suffix state to each child branch.
-            to_visit.extend(children.into_iter().map(|child| (child, next_missing.clone())));
+            to_visit.extend(children);
         }
     }
 
-    Ok(best_candidate)
+    if let Some(best_candidate) = best_candidate.as_ref() {
+        let anchor = chain_store.get_anchor_hash();
+        let mut best_missing = vec![];
+        for (header, validity) in chain_store.ancestors_with_validity(best_candidate.hash()) {
+            // the anchor cannot be validated, so don"t return it
+            if validity.is_none() && header.hash() != anchor {
+                best_missing.push(header.hash());
+            } else {
+                break;
+            }
+        }
+        best_missing.reverse();
+        return Ok(Some((best_candidate.clone(), best_missing)));
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -376,10 +380,10 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_when_best_chain_has_no_descendants() {
+    fn returns_the_best_chain_tip_when_it_has_no_descendants() {
         let store: Arc<dyn ChainStore<BlockHeader>> = Arc::new(InMemConsensusStore::default());
         let chain = run_strategy(any_headers_chain(2));
-        let [a, b] = chain.try_into().unwrap();
+        let [a, b] = chain.clone().try_into().unwrap();
 
         for header in [&a, &b] {
             store.store_header(header).unwrap();
@@ -390,6 +394,6 @@ mod tests {
         store.set_block_valid(&b.hash(), true).unwrap();
 
         let candidate = startup_best_candidate(store.as_ref()).unwrap();
-        assert_eq!(candidate, None);
+        assert_eq!(candidate, Some((b, vec![])));
     }
 }

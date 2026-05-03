@@ -444,7 +444,7 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
 
         let mut stake_distributions = self.stake_distributions.lock().unwrap();
         let stake_distribution =
-            stake_distributions.pop_back().ok_or(StateError::StakeDistributionNotAvailableForRewards)?;
+            stake_distributions.back().ok_or(StateError::StakeDistributionNotAvailableForRewards)?.clone();
 
         let epoch = stake_distribution.epoch + 2;
 

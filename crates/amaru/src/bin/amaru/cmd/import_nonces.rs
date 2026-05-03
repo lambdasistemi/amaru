@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 use amaru::{DEFAULT_NETWORK, bootstrap::import_nonces, default_chain_dir, default_initial_nonces};
-use amaru_kernel::NetworkName;
+use amaru_kernel::{EraHistory, NetworkName};
 use clap::Parser;
 use tracing::info;
 
@@ -48,6 +48,20 @@ pub struct Args {
         env = amaru::env_vars::NONCES_FILE,
     )]
     nonces_file: Option<PathBuf>,
+
+    /// Path to a JSON era history file overriding the network default.
+    ///
+    /// Required for generated testnets whose epoch length or era bounds differ from
+    /// Amaru's built-in network profile. Without it, imported `Nonces` are tagged
+    /// with epochs computed under the wrong epoch length, which makes the runtime
+    /// `evolve_nonce` cascade fire spurious epoch-boundary branches and produce a
+    /// wrong active nonce for VRF verification of the first chain-synced header.
+    #[arg(
+        long,
+        value_name = amaru::value_names::FILEPATH,
+        env = amaru::env_vars::ERA_HISTORY_FILE,
+    )]
+    era_history_file: Option<PathBuf>,
 }
 
 pub async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,10 +69,16 @@ pub async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let chain_dir = args.chain_dir.unwrap_or_else(|| default_chain_dir(network).into());
 
+    let era_history: EraHistory = match args.era_history_file.as_deref() {
+        Some(path) => serde_json::from_slice(&std::fs::read(path)?)?,
+        None => <&EraHistory>::from(network).clone(),
+    };
+
     info!(
         _command = "import-nonces",
         chain_dir = %chain_dir.to_string_lossy(),
         network = %network,
+        era_history_file = %args.era_history_file.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "network default".to_string()),
         "running",
     );
 
@@ -68,9 +88,5 @@ pub async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         default_initial_nonces(network)?
     };
 
-    // FIXME: import nonces function takes an EraHistory which we
-    // construct from NetworkName. In the case of testnets this can be
-    // problematic hence why we have started writing and reading such
-    // files in import_ledger_state.
-    import_nonces(args.network.into(), &chain_dir, initial_nonces).await
+    import_nonces(&era_history, &chain_dir, initial_nonces).await
 }

@@ -57,6 +57,24 @@ pub struct Args {
         default_value = ".",
     )]
     target_dir: PathBuf,
+
+    /// Path to a JSON era history file overriding the snapshot's
+    /// HFC-encoded bounds.
+    ///
+    /// Required for generated testnets whose epoch length or era
+    /// bounds differ from Amaru's built-in network profile. Without
+    /// it, the per-snapshot `history.<slot>.<hash>.json` sidecar is
+    /// emitted with the network defaults (epoch_size_slots = 86400
+    /// for any testnet), which `import-ledger-state` then uses as
+    /// the authoritative era history during snapshot tag computation
+    /// — tagging snapshots with the wrong epoch and corrupting the
+    /// runtime stake distribution view.
+    #[arg(
+        long,
+        value_name = amaru::value_names::FILEPATH,
+        env = amaru::env_vars::ERA_HISTORY_FILE,
+    )]
+    era_history_file: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, thiserror::Error)]
@@ -73,10 +91,16 @@ pub(crate) async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         network = %args.network,
         snapshot = %args.snapshot.to_string_lossy(),
         target_dir = %args.target_dir.to_string_lossy(),
+        era_history_file = %args.era_history_file.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "derive from snapshot".to_string()),
         "running"
     );
 
-    convert_one_snapshot_file(&args.target_dir, &args.snapshot, &args.network).await?;
+    let era_history_override: Option<EraHistory> = match args.era_history_file.as_deref() {
+        Some(path) => Some(serde_json::from_slice(&std::fs::read(path)?)?),
+        None => None,
+    };
+
+    convert_one_snapshot_file(&args.target_dir, &args.snapshot, &args.network, era_history_override.as_ref()).await?;
 
     Ok(())
 }
@@ -85,6 +109,7 @@ async fn convert_one_snapshot_file(
     target_dir: &Path,
     snapshot: &PathBuf,
     network: &NetworkName,
+    era_history_override: Option<&EraHistory>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if !snapshot.exists() {
         return Err(Box::new(Error::SnapshotDoesNotExist(snapshot.clone())));
@@ -95,7 +120,7 @@ async fn convert_one_snapshot_file(
 
     fs::create_dir_all(target_dir).await?;
 
-    let converted = convert_snapshot_to(snapshot, target_dir, network).await?;
+    let converted = convert_snapshot_to(snapshot, target_dir, network, era_history_override).await?;
     info!("converted ledger state from {:?} to {:?}", snapshot, converted);
     Ok(converted)
 }
@@ -104,6 +129,7 @@ async fn convert_snapshot_to(
     snapshot: &PathBuf,
     target_dir: &Path,
     network: &NetworkName,
+    era_history_override: Option<&EraHistory>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let bytes = fs::read(snapshot).await?;
     let mut d = cbor::Decoder::new(bytes.as_slice());
@@ -141,7 +167,10 @@ async fn convert_snapshot_to(
         },
     });
 
-    let era_history = EraHistory::new(&eras, network.default_stability_window());
+    let era_history = match era_history_override {
+        Some(override_history) => override_history.clone(),
+        None => EraHistory::new(&eras, network.default_stability_window()),
+    };
 
     // ledger state
     // https://github.com/abailly/ouroboros-consensus/blob/1508638f832772d21874e18e48b908fcb791cd49/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs#L736
@@ -233,10 +262,23 @@ async fn convert_snapshot_to(
     d.u8()?;
     let active: Nonce = d.decode()?;
 
-    // lab nonce
+    // praosStateLabNonce — the "last applicable block" nonce
+    // (= the parent_hash of the most recent block, set on every
+    // block by the praos transition rule). Not the hash of the
+    // last block itself; therefore not a valid value for amaru's
+    // `tail` (which must be a block hash that load_header can
+    // resolve, so that .parent() on the loaded header recovers
+    // exactly this lab value for the boundary nonce mix).
+    //
+    // Skip here. The bundle's `tail` is computed by the orchestrator
+    // (bootstrap-producer's prev-epoch boundary lookup), not from
+    // the snapshot's CBOR.
     d.skip()?;
 
-    // last epoch nonce
+    // praosStateLastEpochBlockNonce — rolling within-epoch nonce
+    // contribution from the most-recently-seen block, reset to
+    // NeutralNonce at each epoch boundary. Not used by amaru's
+    // evolve_nonce; skip.
     d.skip()?;
 
     let nonces = InitialNonces {
@@ -355,7 +397,7 @@ mod test {
         let tempdir = tempfile::tempdir().unwrap();
         let snapshot_path = PathBuf::from("does-not-exist");
 
-        let result = convert_one_snapshot_file(tempdir.path(), &snapshot_path, &NetworkName::Testnet(42)).await;
+        let result = convert_one_snapshot_file(tempdir.path(), &snapshot_path, &NetworkName::Testnet(42), None).await;
 
         assert!(result.is_err());
     }
@@ -373,7 +415,8 @@ mod test {
         let snapshots = dir_content(Path::new("tests/data/convert")).await.unwrap();
 
         for snapshot in snapshots {
-            let args = super::Args { snapshot, target_dir: tempdir.path().to_path_buf(), network };
+            let args =
+                super::Args { snapshot, target_dir: tempdir.path().to_path_buf(), network, era_history_file: None };
 
             run(args).await.expect("unexpected error in conversion test");
         }
@@ -407,7 +450,7 @@ mod test {
         let snapshots = dir_content(Path::new("tests/data/convert")).await.unwrap();
 
         for snapshot in snapshots {
-            let args = super::Args { snapshot, target_dir: target_dir.clone(), network };
+            let args = super::Args { snapshot, target_dir: target_dir.clone(), network, era_history_file: None };
 
             run(args).await.expect("unexpected error in conversion test");
         }

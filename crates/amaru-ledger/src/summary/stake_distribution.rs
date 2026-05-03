@@ -40,8 +40,7 @@ const EVENT_TARGET: &str = "amaru::ledger::state::stake_distribution";
 ///
 /// Note that the `accounts` field only contains _active_ accounts; that is, accounts
 /// delegated to a registered stake pool.
-#[derive(Debug)]
-#[cfg_attr(test, derive(Clone))]
+#[derive(Debug, Clone)]
 pub struct StakeDistribution {
     /// Epoch number for this snapshot (taken at the end of the epoch)
     pub epoch: Epoch,

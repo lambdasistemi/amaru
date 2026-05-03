@@ -21,14 +21,13 @@ use amaru_kernel::{
 
 use crate::store::{GovernanceActivity, Snapshot, StoreError, columns::dreps};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GovernanceSummary {
     pub dreps: BTreeMap<DRep, DRepState>,
     pub deposits: BTreeMap<StakeCredential, Vec<ProposalState>>,
 }
 
-#[derive(Debug, serde::Serialize)]
-#[cfg_attr(test, derive(Clone))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DRepState {
     #[serde(rename(serialize = "mandate"))]
     pub valid_until: Option<Epoch>,

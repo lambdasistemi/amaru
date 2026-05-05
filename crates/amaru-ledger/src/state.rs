@@ -298,9 +298,23 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
             let old_protocol_version = self.protocol_parameters.protocol_version;
 
             let rewards_summary = self.rewards_summary.take();
+            let had_rewards = rewards_summary.is_some();
 
             let protocol_parameters =
                 self.epoch_transition(&mut *db, &self.snapshots, current_epoch, rewards_summary)?;
+
+            // Evict the GO snapshot of epoch X-2 only if compute_rewards
+            // ran in the just-ended epoch (i.e. pushed a new front entry):
+            // end_epoch just consumed it for rewards, and from epoch X+1
+            // onward VRF lookups target X-1. When the chain follower is
+            // bootstrapped right at an epoch boundary (anchor = last slot
+            // of completed epoch), the first observed transition fires
+            // before any compute_rewards has, so the deque has no spare
+            // entry to evict — popping there would drop a still-needed GO
+            // snapshot for the new epoch's VRF.
+            if had_rewards {
+                self.stake_distributions.lock().unwrap().pop_back();
+            }
 
             self.protocol_parameters = protocol_parameters;
             self.governance_activity = db.governance_activity()?;

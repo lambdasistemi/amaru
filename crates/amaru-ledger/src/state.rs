@@ -450,11 +450,13 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
             RewardsSummary::new(&snapshot, stake_distribution, &self.global_parameters, &self.protocol_parameters)
                 .map_err(StateError::Storage)?;
 
-        stake_distributions.push_front(compute_stake_distribution(
-            &snapshot,
-            &self.era_history,
-            &self.protocol_parameters,
-        )?);
+        if !stake_distributions.iter().any(|distribution| distribution.epoch == epoch) {
+            stake_distributions.push_front(compute_stake_distribution(
+                &snapshot,
+                &self.era_history,
+                &self.protocol_parameters,
+            )?);
+        }
 
         Ok(rewards_summary)
     }
@@ -665,17 +667,29 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
             trace_span!(amaru_observability::amaru::ledger::state::ROLL_BACKWARD, rollback_point = to.to_string());
         let _guard = _span.enter();
 
+        let stable_tip = self
+            .stable
+            .lock()
+            .unwrap()
+            .tip()
+            .unwrap_or_else(|e| panic!("no tip found in stable db: {e:?}"));
+
         // NOTE: This happens typically on start-up; The consensus layer will typically ask us to
         // rollback to the last known point, which ought to be the tip of the database.
-        if self.volatile.is_empty() && self.tip().as_ref() == to {
+        if self.volatile.is_empty() && &stable_tip == to {
             return Ok(());
         }
 
-        if self.tip().as_ref() > to {
-            return Err(BackwardError::RollbackPointBeforeTip { rollback_point: *to, tip: self.tip().into_owned() });
+        if &stable_tip > to {
+            return Err(BackwardError::RollbackPointBeforeTip { rollback_point: *to, tip: stable_tip });
         }
 
-        if self.volatile.is_empty() && self.tip().as_ref() < to {
+        if &stable_tip == to {
+            while self.volatile.pop_front().is_some() {}
+            return Ok(());
+        }
+
+        if self.volatile.is_empty() {
             return Err(BackwardError::RollbackPointInFuture(*to));
         }
 
@@ -707,14 +721,17 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
     }
 }
 
-// NOTE: Initialize stake distribution held in-memory. The one before last is needed by the
-// consensus layer to validate the leader schedule, while the one before that will be
-// consumed for the rewards calculation.
+// NOTE: Initialize stake distribution held in-memory. The latest imported snapshot is needed
+// after restart when the chain store may already be ahead of the stable ledger tip. The one
+// before last is needed by the consensus layer to validate the leader schedule, while the one
+// before that will be consumed for the rewards calculation.
 //
-// We always hold on two stake distributions:
+// We hold up to three stake distributions:
 //
 // - The one from an epoch `e - 1` which is used for the ongoing leader schedule at epoch `e + 1`
 // - The one from an epoch `e - 2` which is used for the rewards calculations at epoch `e + 1`
+// - The one from an epoch `e`, which is used if the node restarts after it has advanced near the
+//   end of epoch `e + 1` but before the in-memory distribution for `e` can be recomputed.
 //
 // Note that the most recent snapshot we have is necessarily `e`, since `e + 1` designates
 // the ongoing epoch, not yet finished (and so, not available as snapshot).
@@ -726,10 +743,11 @@ pub fn initial_stake_distributions(
 
     let mut stake_distributions = VecDeque::new();
 
-    let epoch_for_rewards = latest_epoch.saturating_sub(2);
-    let epoch_for_leader_schedule = latest_epoch.saturating_sub(1);
+    let oldest_required_epoch = u64::from(latest_epoch.saturating_sub(2));
+    let latest_epoch = u64::from(latest_epoch);
 
-    for epoch in [epoch_for_rewards, epoch_for_leader_schedule] {
+    for epoch in oldest_required_epoch..=latest_epoch {
+        let epoch = Epoch::from(epoch);
         let snapshot = snapshots.for_epoch(epoch)?;
 
         let protocol_parameters = snapshot.protocol_parameters()?;

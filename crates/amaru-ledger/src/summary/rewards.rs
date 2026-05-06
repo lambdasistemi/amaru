@@ -121,7 +121,7 @@ use serde::ser::SerializeStruct;
 use tracing::info;
 
 use crate::{
-    store::{Snapshot, StoreError, columns::*},
+    store::{ReadStore, StoreError, columns::*},
     summary::{
         AccountState, PoolState, Pots, SafeRatio, safe_ratio,
         serde::{encode_pool_id, serialize_map},
@@ -369,7 +369,7 @@ impl RewardsSummary {
     }
 
     pub fn new(
-        db: &impl Snapshot,
+        db: &impl ReadStore,
         stake_distribution: StakeDistribution,
         global_parameters: &GlobalParameters,
         protocol_parameters: &ProtocolParameters,
@@ -502,7 +502,7 @@ impl RewardsSummary {
     // beginning of the epoch 177.
     pub fn with_unclaimed_refunds(
         mut self,
-        db: &impl Snapshot,
+        db: &impl ReadStore,
         protocol_parameters: &ProtocolParameters,
     ) -> Result<Self, StoreError> {
         let leftovers = db.iter_pools()?.try_fold(0, |leftovers, (_, row)| {
@@ -521,7 +521,7 @@ impl RewardsSummary {
     }
 
     /// Count blocks produced by pools, returning the total count and map indexed by poolid.
-    fn count_blocks(db: &impl Snapshot) -> Result<(u64, BTreeMap<PoolId, u64>), StoreError> {
+    fn count_blocks(db: &impl ReadStore) -> Result<(u64, BTreeMap<PoolId, u64>), StoreError> {
         let mut total: u64 = 0;
         let mut per_pool: BTreeMap<PoolId, u64> = BTreeMap::new();
 

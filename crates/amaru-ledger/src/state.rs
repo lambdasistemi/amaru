@@ -449,25 +449,51 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
         let _span = trace_span!(amaru_observability::amaru::ledger::state::COMPUTE_REWARDS);
         let _guard = _span.enter();
 
-        let mut stake_distributions = self.stake_distributions.lock().unwrap();
-        let stake_distribution =
-            stake_distributions.back().ok_or(StateError::StakeDistributionNotAvailableForRewards)?.clone();
+        let stake_distribution = {
+            let stake_distributions = self.stake_distributions.lock().unwrap();
+            stake_distributions.back().ok_or(StateError::StakeDistributionNotAvailableForRewards)?.clone()
+        };
 
         let epoch = stake_distribution.epoch + 2;
 
-        let snapshot = self.snapshots.for_epoch(epoch)?;
-        let rewards_summary =
-            RewardsSummary::new(&snapshot, stake_distribution, &self.global_parameters, &self.protocol_parameters)
+        let stable_epoch = {
+            let db = self.stable.lock().unwrap();
+            let stable_tip = db.tip().map_err(StateError::Storage)?;
+            let stable_tip_slot = stable_tip.slot_or_default();
+            self.era_history
+                .slot_to_epoch(stable_tip_slot, stable_tip_slot)
+                .map_err(|e| StateError::ErrorComputingEpoch(stable_tip_slot, e))?
+        };
+
+        match rewards_source(&self.snapshots.snapshots()?, stable_epoch, epoch) {
+            RewardsSource::HistoricalSnapshot => {
+                let snapshot = self.snapshots.for_epoch(epoch)?;
+                let rewards_summary = RewardsSummary::new(
+                    &snapshot,
+                    stake_distribution,
+                    &self.global_parameters,
+                    &self.protocol_parameters,
+                )
                 .map_err(StateError::Storage)?;
 
-        remember_computed_stake_distribution(
-            &mut stake_distributions,
-            &snapshot,
-            &self.era_history,
-            &self.protocol_parameters,
-        )?;
+                remember_computed_stake_distribution(
+                    &mut self.stake_distributions.lock().unwrap(),
+                    &snapshot,
+                    &self.era_history,
+                    &self.protocol_parameters,
+                )?;
 
-        Ok(rewards_summary)
+                Ok(rewards_summary)
+            }
+            RewardsSource::StableStore => {
+                let db = self.stable.lock().unwrap();
+                RewardsSummary::new(&*db, stake_distribution, &self.global_parameters, &self.protocol_parameters)
+                    .map_err(StateError::Storage)
+            }
+            RewardsSource::Missing => {
+                Err(StateError::Storage(StoreError::missing::<RewardsSummary>("rewards calculation snapshot")))
+            }
+        }
     }
 
     /// Roll the ledger forward with the given block by applying transactions one by one, in
@@ -805,6 +831,23 @@ fn stake_distribution_for_pool_access(
         let latest = stake_distributions.iter().max_by_key(|distribution| distribution.epoch)?;
         (epoch > latest.epoch).then_some(latest)
     })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RewardsSource {
+    HistoricalSnapshot,
+    StableStore,
+    Missing,
+}
+
+fn rewards_source(available_snapshots: &[Epoch], stable_epoch: Epoch, rewards_epoch: Epoch) -> RewardsSource {
+    if available_snapshots.contains(&rewards_epoch) {
+        RewardsSource::HistoricalSnapshot
+    } else if stable_epoch == rewards_epoch {
+        RewardsSource::StableStore
+    } else {
+        RewardsSource::Missing
+    }
 }
 
 pub fn compute_stake_distribution(
@@ -1224,6 +1267,23 @@ mod tests {
             observer.get_pool(Slot::from(5 * 86_400_u64), &unknown_pool),
             Err(GetPoolError::StakeDistributionNotAvailable(epoch)) if epoch == Epoch::from(3)
         ));
+    }
+
+    #[test]
+    fn rewards_source_uses_stable_store_when_historical_snapshot_is_not_materialized_yet() {
+        let available_snapshots = vec![Epoch::from(0), Epoch::from(1), Epoch::from(2)];
+
+        assert_eq!(rewards_source(&available_snapshots, Epoch::from(3), Epoch::from(3)), RewardsSource::StableStore);
+    }
+
+    #[test]
+    fn rewards_source_uses_historical_snapshot_when_available() {
+        let available_snapshots = vec![Epoch::from(0), Epoch::from(1), Epoch::from(2), Epoch::from(3)];
+
+        assert_eq!(
+            rewards_source(&available_snapshots, Epoch::from(3), Epoch::from(3)),
+            RewardsSource::HistoricalSnapshot
+        );
     }
 }
 

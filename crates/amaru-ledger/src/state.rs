@@ -280,24 +280,19 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
         if epoch_transitioning {
             let old_protocol_version = self.protocol_parameters.protocol_version;
 
-            let rewards_summary = self.rewards_summary.take();
-            let had_rewards = rewards_summary.is_some();
+            drop(db);
+            let rewards_summary = match self.rewards_summary.take() {
+                Some(rewards_summary) => rewards_summary,
+                None => self.compute_rewards()?,
+            };
+            db = self.stable.lock().unwrap();
 
             let protocol_parameters =
-                self.epoch_transition(&mut *db, &self.snapshots, current_epoch, rewards_summary)?;
+                self.epoch_transition(&mut *db, &self.snapshots, current_epoch, Some(rewards_summary))?;
 
-            // Evict the GO snapshot of epoch X-2 only if compute_rewards
-            // ran in the just-ended epoch (i.e. pushed a new front entry):
-            // end_epoch just consumed it for rewards, and from epoch X+1
-            // onward VRF lookups target X-1. When the chain follower is
-            // bootstrapped right at an epoch boundary (anchor = last slot
-            // of completed epoch), the first observed transition fires
-            // before any compute_rewards has, so the deque has no spare
-            // entry to evict — popping there would drop a still-needed GO
-            // snapshot for the new epoch's VRF.
-            if had_rewards {
-                self.stake_distributions.lock().unwrap().pop_back();
-            }
+            // end_epoch just consumed the oldest stake distribution for rewards; from the next epoch
+            // onward, VRF lookups target the newer distributions retained in front of it.
+            self.stake_distributions.lock().unwrap().pop_back();
 
             self.protocol_parameters = protocol_parameters;
             self.governance_activity = db.governance_activity()?;
@@ -431,6 +426,17 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
         }?;
         batch.commit()?;
 
+        {
+            let snapshot = snapshots.for_epoch(next_epoch - 1)?;
+            let mut stake_distributions = self.stake_distributions.lock().unwrap();
+            remember_computed_stake_distribution(
+                &mut stake_distributions,
+                &snapshot,
+                &self.era_history,
+                &self.protocol_parameters,
+            )?;
+        }
+
         Ok(protocol_parameters)
     }
 
@@ -450,13 +456,12 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
             RewardsSummary::new(&snapshot, stake_distribution, &self.global_parameters, &self.protocol_parameters)
                 .map_err(StateError::Storage)?;
 
-        if !stake_distributions.iter().any(|distribution| distribution.epoch == epoch) {
-            stake_distributions.push_front(compute_stake_distribution(
-                &snapshot,
-                &self.era_history,
-                &self.protocol_parameters,
-            )?);
-        }
+        remember_computed_stake_distribution(
+            &mut stake_distributions,
+            &snapshot,
+            &self.era_history,
+            &self.protocol_parameters,
+        )?;
 
         Ok(rewards_summary)
     }
@@ -667,12 +672,8 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
             trace_span!(amaru_observability::amaru::ledger::state::ROLL_BACKWARD, rollback_point = to.to_string());
         let _guard = _span.enter();
 
-        let stable_tip = self
-            .stable
-            .lock()
-            .unwrap()
-            .tip()
-            .unwrap_or_else(|e| panic!("no tip found in stable db: {e:?}"));
+        let stable_tip =
+            self.stable.lock().unwrap().tip().unwrap_or_else(|e| panic!("no tip found in stable db: {e:?}"));
 
         // NOTE: This happens typically on start-up; The consensus layer will typically ask us to
         // rollback to the last known point, which ought to be the tip of the database.
@@ -752,13 +753,39 @@ pub fn initial_stake_distributions(
 
         let protocol_parameters = snapshot.protocol_parameters()?;
 
-        stake_distributions.push_front(
+        remember_stake_distribution(
+            &mut stake_distributions,
             compute_stake_distribution(&snapshot, era_history, &protocol_parameters)
                 .map_err(|err| StoreError::Internal(err.into()))?,
         );
     }
 
     Ok(stake_distributions)
+}
+
+fn remember_stake_distribution(
+    stake_distributions: &mut VecDeque<StakeDistribution>,
+    stake_distribution: StakeDistribution,
+) {
+    if !stake_distributions.iter().any(|distribution| distribution.epoch == stake_distribution.epoch) {
+        stake_distributions.push_front(stake_distribution);
+    }
+}
+
+fn remember_computed_stake_distribution(
+    stake_distributions: &mut VecDeque<StakeDistribution>,
+    snapshot: &impl Snapshot,
+    era_history: &EraHistory,
+    protocol_parameters: &ProtocolParameters,
+) -> Result<(), StateError> {
+    if !stake_distributions.iter().any(|distribution| distribution.epoch == snapshot.epoch()) {
+        remember_stake_distribution(
+            stake_distributions,
+            compute_stake_distribution(snapshot, era_history, protocol_parameters)?,
+        );
+    }
+
+    Ok(())
 }
 
 pub fn compute_stake_distribution(
@@ -1108,6 +1135,36 @@ impl HasStakeDistribution for StakeDistributionObserver {
             stake: st.stake,
             active_stake: stake_distribution.active_stake,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_stake_distribution(epoch: u64) -> StakeDistribution {
+        StakeDistribution {
+            epoch: Epoch::from(epoch),
+            active_stake: 0,
+            pools_voting_stake: 0,
+            dreps_voting_stake: 0,
+            accounts: BTreeMap::new(),
+            pools: BTreeMap::new(),
+            dreps: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn remembers_new_stake_distribution_before_evicting_consumed_rewards_epoch() {
+        let mut stake_distributions =
+            VecDeque::from([empty_stake_distribution(10), empty_stake_distribution(9), empty_stake_distribution(8)]);
+
+        remember_stake_distribution(&mut stake_distributions, empty_stake_distribution(11));
+        stake_distributions.pop_back();
+
+        let epochs = stake_distributions.iter().map(|distribution| u64::from(distribution.epoch)).collect::<Vec<_>>();
+
+        assert_eq!(epochs, vec![11, 10, 9]);
     }
 }
 

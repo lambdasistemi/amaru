@@ -297,24 +297,23 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
         if epoch_transitioning {
             let old_protocol_version = self.protocol_parameters.protocol_version;
 
-            let rewards_summary = self.rewards_summary.take();
-            let had_rewards = rewards_summary.is_some();
+            // Eagerly compute rewards if compute_rewards has not yet fired this epoch (e.g. when
+            // the follower is bootstrapped right at an epoch boundary, before stability_window).
+            // end_epoch needs a rewards_summary either way; computing on demand is preferable to
+            // failing with RewardsSummaryNotReady.
+            drop(db);
+            let rewards_summary = match self.rewards_summary.take() {
+                Some(rewards_summary) => rewards_summary,
+                None => self.compute_rewards()?,
+            };
+            db = self.stable.lock().unwrap();
 
             let protocol_parameters =
-                self.epoch_transition(&mut *db, &self.snapshots, current_epoch, rewards_summary)?;
+                self.epoch_transition(&mut *db, &self.snapshots, current_epoch, Some(rewards_summary))?;
 
-            // Evict the GO snapshot of epoch X-2 only if compute_rewards
-            // ran in the just-ended epoch (i.e. pushed a new front entry):
-            // end_epoch just consumed it for rewards, and from epoch X+1
-            // onward VRF lookups target X-1. When the chain follower is
-            // bootstrapped right at an epoch boundary (anchor = last slot
-            // of completed epoch), the first observed transition fires
-            // before any compute_rewards has, so the deque has no spare
-            // entry to evict — popping there would drop a still-needed GO
-            // snapshot for the new epoch's VRF.
-            if had_rewards {
-                self.stake_distributions.lock().unwrap().pop_back();
-            }
+            // end_epoch just consumed the oldest stake distribution for rewards; from the next
+            // epoch onward, VRF lookups target the newer distributions retained in front of it.
+            self.stake_distributions.lock().unwrap().pop_back();
 
             self.protocol_parameters = protocol_parameters;
             self.governance_activity = db.governance_activity()?;
@@ -448,6 +447,20 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
         }?;
         batch.commit()?;
 
+        // Ensure the next epoch's GO snapshot (epoch - 1 from the start of `next_epoch`) is
+        // present in the cached deque so VRF lookups in `next_epoch` can resolve it even if
+        // compute_rewards has not yet fired in the prior epoch.
+        {
+            let snapshot = snapshots.for_epoch(next_epoch - 1)?;
+            let mut stake_distributions = self.stake_distributions.lock().unwrap();
+            remember_computed_stake_distribution(
+                &mut stake_distributions,
+                &snapshot,
+                &self.era_history,
+                &self.protocol_parameters,
+            )?;
+        }
+
         Ok(protocol_parameters)
     }
 
@@ -467,11 +480,12 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
             RewardsSummary::new(&snapshot, stake_distribution, &self.global_parameters, &self.protocol_parameters)
                 .map_err(StateError::Storage)?;
 
-        stake_distributions.push_front(compute_stake_distribution(
+        remember_computed_stake_distribution(
+            &mut stake_distributions,
             &snapshot,
             &self.era_history,
             &self.protocol_parameters,
-        )?);
+        )?;
 
         Ok(rewards_summary)
     }
@@ -780,13 +794,39 @@ pub fn initial_stake_distributions(
 
         let protocol_parameters = snapshot.protocol_parameters()?;
 
-        stake_distributions.push_front(
+        remember_stake_distribution(
+            &mut stake_distributions,
             compute_stake_distribution(&snapshot, era_history, &protocol_parameters)
                 .map_err(|err| StoreError::Internal(err.into()))?,
         );
     }
 
     Ok(stake_distributions)
+}
+
+fn remember_stake_distribution(
+    stake_distributions: &mut VecDeque<StakeDistribution>,
+    stake_distribution: StakeDistribution,
+) {
+    if !stake_distributions.iter().any(|distribution| distribution.epoch == stake_distribution.epoch) {
+        stake_distributions.push_front(stake_distribution);
+    }
+}
+
+fn remember_computed_stake_distribution(
+    stake_distributions: &mut VecDeque<StakeDistribution>,
+    snapshot: &impl Snapshot,
+    era_history: &EraHistory,
+    protocol_parameters: &ProtocolParameters,
+) -> Result<(), StateError> {
+    if !stake_distributions.iter().any(|distribution| distribution.epoch == snapshot.epoch()) {
+        remember_stake_distribution(
+            stake_distributions,
+            compute_stake_distribution(snapshot, era_history, protocol_parameters)?,
+        );
+    }
+
+    Ok(())
 }
 
 pub fn compute_stake_distribution(

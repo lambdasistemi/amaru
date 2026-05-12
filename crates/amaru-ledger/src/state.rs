@@ -211,7 +211,11 @@ impl<S: Store, HS: HistoricalStores> State<S, HS> {
     /// Obtain a view of the stake distribution, to allow decoupling the ledger from other
     /// components that require access to it.
     pub fn view_stake_distribution(&self) -> impl HasStakeDistribution + use<S, HS> {
-        StakeDistributionObserver { view: self.stake_distributions.clone(), era_history: self.era_history.clone() }
+        StakeDistributionObserver {
+            view: self.stake_distributions.clone(),
+            era_history: self.era_history.clone(),
+            allow_future_epoch_forecast: matches!(self.network, NetworkName::Testnet(_)),
+        }
     }
 
     pub fn network(&self) -> &NetworkName {
@@ -829,6 +833,21 @@ fn remember_computed_stake_distribution(
     Ok(())
 }
 
+fn stake_distribution_for_pool_access(
+    stake_distributions: &VecDeque<StakeDistribution>,
+    epoch: Epoch,
+    allow_future_epoch_forecast: bool,
+) -> Option<&StakeDistribution> {
+    stake_distributions.iter().find(|distribution| distribution.epoch == epoch).or_else(|| {
+        if !allow_future_epoch_forecast {
+            return None;
+        }
+
+        let latest = stake_distributions.iter().max_by_key(|distribution| distribution.epoch)?;
+        (epoch > latest.epoch).then_some(latest)
+    })
+}
+
 pub fn compute_stake_distribution(
     snapshot: &impl Snapshot,
     era_history: &EraHistory,
@@ -1151,6 +1170,9 @@ impl<'a> Deref for StakeDistributionView<'a> {
 pub struct StakeDistributionObserver {
     view: Arc<Mutex<VecDeque<StakeDistribution>>>,
     era_history: Arc<EraHistory>,
+    // Generated private testnets can fetch headers from the next leader schedule before the stable
+    // ledger has materialized that epoch's snapshot. Public networks keep exact lookups only.
+    allow_future_epoch_forecast: bool,
 }
 
 impl HasStakeDistribution for StakeDistributionObserver {
@@ -1168,8 +1190,16 @@ impl HasStakeDistribution for StakeDistributionObserver {
             .map_err(GetPoolError::SlotToEpochConversionFailure)?
             .saturating_sub(2);
         let view = self.view.lock().unwrap();
-        let stake_distribution =
-            view.iter().find(|s| s.epoch == epoch).ok_or(GetPoolError::StakeDistributionNotAvailable(epoch))?;
+        let stake_distribution = stake_distribution_for_pool_access(&view, epoch, self.allow_future_epoch_forecast)
+            .ok_or(GetPoolError::StakeDistributionNotAvailable(epoch))?;
+
+        if stake_distribution.epoch != epoch {
+            debug!(
+                requested_epoch = u64::from(epoch),
+                forecast_epoch = u64::from(stake_distribution.epoch),
+                "stake_distribution.forecast_from_latest"
+            );
+        }
 
         Ok(stake_distribution.pools.get(pool).map(|st| PoolSummary {
             vrf: st.parameters.vrf,

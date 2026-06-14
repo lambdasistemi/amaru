@@ -30,6 +30,16 @@ impl EraSummary {
     /// where the EraSummary doesn't have any upper bound, then we check whether the
     /// point is within a foreseeable horizon.
     pub fn contains_slot(&self, slot: &Slot, tip: &Slot, stability_window: &Slot) -> bool {
+        // A zero-length era (epoch_size_slots == 0, i.e. start == end) contains no
+        // slot; skip it, otherwise the inclusive end bound below selects it and
+        // slot_to_epoch divides by zero. Such eras arise for custom testnets that
+        // fast-track every hard fork to epoch 0 (pragma-org/amaru#959 allows them).
+        // The end bound stays inclusive for real eras: a slot exactly on an era
+        // boundary resolves via the closed era, so its epoch is known without the
+        // forecast horizon (see the contains_slot tests).
+        if self.params.epoch_size_slots == 0 {
+            return false;
+        }
         &self.end.as_ref().map(|end| end.slot).unwrap_or_else(|| self.calculate_end_bound(tip, stability_window).slot)
             >= slot
     }
@@ -37,6 +47,9 @@ impl EraSummary {
     /// Like contains_slot, but doesn't enforce anything about the upper bound. So when there's no
     /// upper bound, the slot is simply always considered within the era.
     pub fn contains_slot_unchecked_horizon(&self, slot: &Slot) -> bool {
+        if self.params.epoch_size_slots == 0 {
+            return false;
+        }
         self.end.as_ref().map(|end| &end.slot >= slot).unwrap_or(true)
     }
 

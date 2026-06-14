@@ -841,6 +841,42 @@ mod tests {
         }
     }
 
+    // A cluster that fast-tracks every hard fork to epoch 0 produces zero-length
+    // pre-Conway eras (start == end, epoch_size_slots == 0) — e.g. parsed from a
+    // snapshot whose node config sets every Test*HardForkAtEpoch to 0.
+    fn fast_tracked_history() -> EraHistory {
+        // A zero-length leading era (epoch_size_slots == 0), as produced when a
+        // hard fork happens at epoch 0.
+        let mut zero_length = default_params();
+        zero_length.epoch_size_slots = 0;
+        EraHistory {
+            stability_window: Slot::new(25920),
+            eras: vec![
+                EraSummary {
+                    start: EraBound { time: Duration::from_secs(0), slot: Slot::new(0), epoch: Epoch::new(0) },
+                    end: Some(EraBound { time: Duration::from_secs(0), slot: Slot::new(0), epoch: Epoch::new(0) }),
+                    params: zero_length,
+                },
+                EraSummary {
+                    start: EraBound { time: Duration::from_secs(0), slot: Slot::new(0), epoch: Epoch::new(0) },
+                    end: None,
+                    params: default_params(),
+                },
+            ],
+        }
+    }
+
+    // Regression for the null-length-era divide-by-zero. Before the
+    // EraSummary::contains_slot guard, slot 0 selected the zero-length Byron era
+    // and slot_to_epoch divided by epoch_size_slots == 0 (the path
+    // `amaru bootstrap` takes via slot_to_epoch_unchecked_horizon).
+    #[test]
+    fn slot_to_epoch_skips_zero_length_eras() {
+        let eras = fast_tracked_history();
+        assert_eq!(eras.slot_to_epoch_unchecked_horizon(Slot::new(0)).unwrap(), Epoch::new(0));
+        assert_eq!(eras.slot_to_epoch_unchecked_horizon(Slot::new(100_000)).unwrap(), Epoch::new(1));
+    }
+
     #[test]
     fn slot_to_relative_time_within_horizon() {
         let eras = two_eras();

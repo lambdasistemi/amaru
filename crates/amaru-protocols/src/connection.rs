@@ -179,7 +179,14 @@ pub async fn stage(
                 eff.schedule_after(msg, params.config.reconnect_delay).await;
                 state
             }
-            x => unimplemented!("{x:?}"),
+            (State::Responder(s), ConnectionMessage::FetchBlocks { .. } | ConnectionMessage::FetchBlocks2 { .. }) => {
+                tracing::warn!("ignoring block-fetch request routed to a responder connection");
+                State::Responder(s)
+            }
+            (state, msg) => {
+                tracing::error!(message_type = msg.message_type(), "unexpected message for connection state; ignoring");
+                state
+            }
         };
         Connection { params, state }
     }

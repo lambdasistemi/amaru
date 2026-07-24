@@ -675,6 +675,24 @@ pub async fn import_snapshots(
     Ok(())
 }
 
+/// Import a single snapshot, extracting nonces using the given tail hash.
+///
+/// Returns the extracted nonces, or an error if extraction fails.
+pub async fn import_snapshot_with_nonces(
+    network: NetworkName,
+    global_parameters: &GlobalParameters,
+    snapshot: &Path,
+    ledger_dir: &Path,
+    nonce_tail: HeaderHash,
+) -> Result<InitialNonces, Box<dyn std::error::Error>> {
+    let imported =
+        import_snapshot_with_optional_nonces(network, global_parameters, snapshot, ledger_dir, Some(nonce_tail))
+            .await?;
+    imported
+        .initial_nonces
+        .ok_or_else(|| "nonce-tail was provided but no nonces were extracted from the snapshot".into())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ImportError {
     #[error("malformed snapshot point in file name: {0}")]

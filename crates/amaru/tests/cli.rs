@@ -168,6 +168,15 @@ fn dev_chain_import_headers_help_shows_flags() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn dev_ledger_states_import_help_shows_nonce_tail() -> Result<(), Box<dyn Error>> {
+    let help = amaru_help(&["dev", "ledger", "states", "import"])?;
+    assert!(help.contains("--nonce-tail"), "states import should accept --nonce-tail");
+    assert!(help.contains("--ledger-dir"), "states import should accept --ledger-dir");
+    assert!(help.contains("--network"), "states import should accept --network");
+    Ok(())
+}
+
+#[test]
 fn dev_traces_help_shows_subcommands() -> Result<(), Box<dyn Error>> {
     let help = amaru_help(&["dev", "traces"])?;
     assert!(help.contains("dump"), "dev traces help should show 'dump'");

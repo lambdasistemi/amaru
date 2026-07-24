@@ -151,8 +151,19 @@ fn dev_chain_help_shows_subcommands() -> Result<(), Box<dyn Error>> {
     assert!(help.contains("dump"), "dev chain help should show 'dump'");
     assert!(help.contains("clear-invalid"), "dev chain help should show 'clear-invalid'");
     assert!(help.contains("fetch"), "dev chain help should show 'fetch'");
+    assert!(help.contains("import-headers"), "dev chain help should show 'import-headers'");
     assert!(help.contains("migrate"), "dev chain help should show 'migrate'");
     assert!(help.contains("remove"), "dev chain help should show 'remove'");
+    Ok(())
+}
+
+#[test]
+fn dev_chain_import_headers_help_shows_flags() -> Result<(), Box<dyn Error>> {
+    let help = amaru_help(&["dev", "chain", "import-headers"])?;
+    assert!(help.contains("--header-file"), "import-headers should accept --header-file");
+    assert!(help.contains("--chain-dir"), "import-headers should accept --chain-dir");
+    assert!(help.contains("--network"), "import-headers should accept --network");
+    assert!(help.contains("--peer-address"), "import-headers should accept --peer-address");
     Ok(())
 }
 

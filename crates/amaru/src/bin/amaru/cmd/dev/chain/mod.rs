@@ -20,6 +20,7 @@ pub(crate) mod children;
 pub(crate) mod clear_invalid;
 pub(crate) mod dump;
 pub(crate) mod fetch;
+pub(crate) mod import_headers;
 pub(crate) mod migrate;
 pub(crate) mod prune;
 pub(crate) mod remove;
@@ -50,6 +51,9 @@ pub(crate) enum ChainCommand {
 
     /// Fetch specified chain headers.
     Fetch(fetch::Args),
+
+    /// Import chain headers from local CBOR files or a remote peer.
+    ImportHeaders(import_headers::Args),
 
     /// Migrate the chain database to the current version.
     ///

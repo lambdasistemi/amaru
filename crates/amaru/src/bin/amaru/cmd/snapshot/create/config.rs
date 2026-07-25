@@ -22,7 +22,7 @@ use amaru_kernel::NetworkName;
 use amaru_observability::info;
 use serde::Deserialize;
 
-use super::repo_root;
+use super::{http::LazyClient, repo_root};
 const OFFICIAL_CARDANO_NODE_CONFIG_BASE_URL: &str = "https://book.world.dev.cardano.org/environments";
 
 #[derive(Debug, Deserialize)]
@@ -65,7 +65,7 @@ impl CardanoNodeConfigManifest {
 }
 
 pub(super) async fn resolve_config_dir(
-    client: &reqwest::Client,
+    client: &LazyClient,
     config_dir: Option<PathBuf>,
     network: NetworkName,
     work_dir: &Path,
@@ -84,12 +84,12 @@ pub(super) async fn resolve_config_dir(
             }
             Err(_) => {
                 info!(cli::cardano_node_config::DOWNLOAD, config_dir = %config_dir.display(), network = %network);
-                return download_official_config_bundle(client, network, &config_dir).await;
+                return download_official_config_bundle(client.get().await?, network, &config_dir).await;
             }
         }
     }
 
-    download_official_config_bundle(client, network, &cached_config_dir(work_dir, network)).await
+    download_official_config_bundle(client.get().await?, network, &cached_config_dir(work_dir, network)).await
 }
 
 fn validate_explicit_config_dir_usage(network: NetworkName) -> Result<(), Box<dyn Error>> {

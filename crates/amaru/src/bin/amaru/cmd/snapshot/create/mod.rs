@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 mod archive;
 mod config;
 mod db_analyser;
+mod http;
 mod koios;
 
 use archive::{
@@ -48,6 +49,7 @@ use archive::{
 };
 use config::resolve_config_dir;
 use db_analyser::{ensure_db_analyser_binary, exact_snapshot_dir, run_db_analyser, select_analyse_from_slot};
+use http::LazyClient;
 use koios::{fetch_current_epoch, fetch_last_block_for_epoch};
 
 const PACKAGED_HEADERS_FILE_NAME: &str = "bootstrap.headers.json";
@@ -220,7 +222,9 @@ pub async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         snapshot: snapshot_points,
     } = args;
 
-    let client = reqwest::Client::new();
+    // Built on first use only: the offline path (--cardano-node-config-dir +
+    // --snapshot) needs no HTTP at all, and must not require a system CA store.
+    let client = LazyClient::default();
     let dist_dir = dist_dir.unwrap_or_else(|| default_dist_dir(network));
     let metadata_dir = dist_dir.join("epochs");
     let snapshot_output_dir = snapshot_dir.unwrap_or_else(|| default_snapshot_output_dir(network));
@@ -243,12 +247,13 @@ pub async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the epoch targets: from an explicit targets file (Koios bypass, for custom
     // testnets) or from Koios (public networks).
     let mut targets = if snapshot_points.is_empty() {
-        let start_epoch = resolve_start_epoch(&client, network, epoch).await?;
+        let http = client.get().await?;
+        let start_epoch = resolve_start_epoch(http, network, epoch).await?;
         let target_epochs = bootstrap_target_epochs(start_epoch)?;
         let mut resolved = Vec::with_capacity(target_epochs.len());
 
         for epoch in target_epochs {
-            resolved.push(fetch_last_block_for_epoch(&client, network, epoch).await?);
+            resolved.push(fetch_last_block_for_epoch(http, network, epoch).await?);
         }
 
         resolved
